@@ -1,13 +1,17 @@
--- AdminESP.lua
+-- PhongHub.lua
 -- LocalScript → StarterPlayerScripts
 -- Requires Rayfield: https://sirius.menu/rayfield
 -- Uses Drawing API (executor environment)
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
-local Camera            = workspace.CurrentCamera
-local LocalPlayer       = Players.LocalPlayer
+-- ============================================================
+-- SERVICES
+-- ============================================================
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local Camera           = workspace.CurrentCamera
+local LocalPlayer      = Players.LocalPlayer
 
 -- ============================================================
 -- LOAD RAYFIELD
@@ -19,81 +23,78 @@ local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 -- ============================================================
 local Settings = {
 	-- Highlights
-	HighlightEnabled    = true,
-	FillTransparency    = 0.55,
-	OutlineTransparency = 0.0,
+	HighlightEnabled     = true,
+	FillTransparency     = 0.55,
+	OutlineTransparency  = 0.0,
 
 	-- 2D Box
-	BoxEnabled          = true,
-	BoxThickness        = 1,
+	BoxEnabled           = true,
+	BoxThickness         = 1,
 
 	-- Tracers
-	TracerEnabled       = true,
-	TracerOrigin        = "Bottom",  -- "Bottom" | "Center" | "Top"
-	TracerThickness     = 1,
+	TracerEnabled        = true,
+	TracerOrigin         = "Bottom",
+	TracerThickness      = 1,
 
 	-- Labels
-	HealthBarEnabled    = true,
-	NameTagEnabled      = true,
+	HealthBarEnabled     = true,
+	NameTagEnabled       = true,
 	DistanceLabelEnabled = true,
 
 	-- Logic
-	TeamCheckEnabled    = true,
-	SeparateColors      = true,
-	MaxRenderDistance   = 1000,  -- studs; 0 = unlimited
+	TeamCheckEnabled     = true,
+	SeparateColors       = true,
+	MaxRenderDistance    = 1000,
 
-	-- Colors (Enemy)
-	EnemyFillColor      = Color3.fromRGB(255, 60,  60),
-	EnemyOutlineColor   = Color3.fromRGB(255, 160, 160),
-	EnemyTracerColor    = Color3.fromRGB(255, 60,  60),
-	EnemyBoxColor       = Color3.fromRGB(255, 60,  60),
-	EnemyNameColor      = Color3.fromRGB(255, 60,  60),
+	-- Enemy Colors
+	EnemyFillColor       = Color3.fromRGB(255, 60,  60),
+	EnemyOutlineColor    = Color3.fromRGB(255, 160, 160),
+	EnemyTracerColor     = Color3.fromRGB(255, 60,  60),
+	EnemyBoxColor        = Color3.fromRGB(255, 60,  60),
+	EnemyNameColor       = Color3.fromRGB(255, 60,  60),
+
+	-- Team Colors
+	TeamFillColor        = Color3.fromRGB(60,  160, 255),
+	TeamOutlineColor     = Color3.fromRGB(160, 220, 255),
+	TeamTracerColor      = Color3.fromRGB(60,  160, 255),
+	TeamBoxColor         = Color3.fromRGB(60,  160, 255),
+	TeamNameColor        = Color3.fromRGB(60,  160, 255),
 
 	-- Aim Assist
-	AimAssistEnabled    = false,
-	AimStrength         = 0.5,   -- 0.0 (off) → 1.0 (snap)
-	AimFOV              = 120,   -- radius in pixels
-	AimSmoothing        = 6,     -- higher = slower/smoother camera movement
-	AimBone             = "Head",-- "Head" | "HumanoidRootPart" | "UpperTorso"
-	AimTeamCheck        = true,  -- skip teammates
-	AimWallCheck        = true,  -- skip targets behind walls
-	AimFOVCircle        = true,  -- draw FOV circle on screen
-	AimFOVColor         = Color3.fromRGB(255, 255, 255),
-	AimFOVThickness     = 1,
+	AimAssistEnabled     = false,
+	AimStrength          = 0.5,
+	AimFOV               = 120,
+	AimSmoothing         = 6,
+	AimBone              = "Head",
+	AimTeamCheck         = false,
+	AimWallCheck         = true,
+	AimFOVCircle         = true,
+	AimFOVColor          = Color3.fromRGB(255, 255, 255),
+	AimFOVThickness      = 1,
 
-	-- Wall Check
-	WallCheckEnabled    = false,  -- false = always show (through walls)
-	WallCheckHideBox    = false,  -- true = hide box/tracer when behind wall
-	WallCheckHideHL     = false,  -- true = hide highlight when behind wall
-	WallHiddenBoxColor  = Color3.fromRGB(100, 100, 100),  -- dimmed color when behind wall
-	WallHiddenAlpha     = 0.4,    -- transparency multiplier for hidden players
-
-	-- Colors (Team)
-	TeamFillColor       = Color3.fromRGB(60,  160, 255),
-	TeamOutlineColor    = Color3.fromRGB(160, 220, 255),
-	TeamTracerColor     = Color3.fromRGB(60,  160, 255),
-	TeamBoxColor        = Color3.fromRGB(60,  160, 255),
-	TeamNameColor       = Color3.fromRGB(60,  160, 255),
+	-- Wall Check (ESP)
+	WallCheckEnabled     = false,
+	WallCheckHideBox     = false,
+	WallCheckHideHL      = false,
+	WallHiddenBoxColor   = Color3.fromRGB(100, 100, 100),
 }
 
 -- ============================================================
 -- STATE
 -- ============================================================
-local highlights        = {}   -- [Player] = Highlight
-local perPlayerOverride = {}   -- [Player] = true/false (force on/force off)
-local whitelist         = {}   -- [Player] = true  (silently skip)
+local highlights         = {}
+local perPlayerOverride  = {}
+local whitelist          = {}
 
--- Aim assist keybind state
-local aimBindKey        = Enum.UserInputType.MouseButton2  -- default: RMB
-local aimBindLabel      = "RMB"       -- human-readable name shown in UI
-local isListeningForBind = false      -- true while waiting for next input
+local aimBindKey         = Enum.UserInputType.MouseButton2
+local aimBindLabel       = "RMB"
+local isListeningForBind = false
 
 -- ============================================================
 -- DRAWING POOL
 -- ============================================================
--- Pool tables keyed by type string
-local pools = {}
-local poolIdx = {}
+local pools    = {}
+local poolIdx  = {}
 
 local function acquireDrawing(dtype)
 	pools[dtype]   = pools[dtype]   or {}
@@ -111,14 +112,11 @@ end
 
 local function resetPool()
 	for dtype, tbl in pairs(pools) do
-		for _, d in ipairs(tbl) do
-			d.Visible = false
-		end
+		for _, d in ipairs(tbl) do d.Visible = false end
 		poolIdx[dtype] = 0
 	end
 end
 
--- Helpers
 local function newLine()
 	local l = acquireDrawing("Line")
 	l.Thickness = Settings.BoxThickness
@@ -127,10 +125,10 @@ end
 
 local function newText()
 	local t = acquireDrawing("Text")
-	t.Size     = 13
-	t.Font     = Drawing.Fonts.UI
-	t.Outline  = true
-	t.OutlineColor = Color3.fromRGB(0,0,0)
+	t.Size         = 13
+	t.Font         = Drawing.Fonts.UI
+	t.Outline      = true
+	t.OutlineColor = Color3.fromRGB(0, 0, 0)
 	return t
 end
 
@@ -181,7 +179,7 @@ local function refreshHighlight(player)
 	local hl = highlights[player]
 	if not hl then
 		hl = Instance.new("Highlight")
-		hl.Name   = "AdminESP_HL"
+		hl.Name   = "PhongHub_HL"
 		hl.Parent = char
 		highlights[player] = hl
 	end
@@ -204,20 +202,16 @@ local function removeHighlight(player)
 end
 
 -- ============================================================
--- 2D BOX: derive tight screen box from character parts
+-- 2D BOUNDING BOX
 -- ============================================================
 local function getBoundingBox2D(char)
-	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hrp  = char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return nil end
-
-	-- Use HEAD top and HRP bottom as vertical anchors (world-axis aligned, no rotation issues)
 	local head = char:FindFirstChild("Head")
-	local topPos    = head and head.Position + Vector3.new(0, head.Size.Y / 2, 0)
-	                       or  hrp.Position  + Vector3.new(0, 3.5, 0)
+	local topPos    = head and (head.Position + Vector3.new(0, head.Size.Y / 2, 0))
+	                       or  (hrp.Position  + Vector3.new(0, 3.5, 0))
 	local bottomPos = hrp.Position - Vector3.new(0, 3, 0)
-
-	-- Project 8 world-axis-aligned corners of the character AABB
-	local halfW = 1.5  -- half-width / half-depth in studs
+	local halfW = 1.5
 	local corners = {
 		topPos    + Vector3.new( halfW, 0,  halfW),
 		topPos    + Vector3.new(-halfW, 0,  halfW),
@@ -228,14 +222,12 @@ local function getBoundingBox2D(char)
 		bottomPos + Vector3.new( halfW, 0, -halfW),
 		bottomPos + Vector3.new(-halfW, 0, -halfW),
 	}
-
-	local minX, minY = math.huge,  math.huge
+	local minX, minY =  math.huge,  math.huge
 	local maxX, maxY = -math.huge, -math.huge
 	local anyOnScreen = false
-
 	for _, c in ipairs(corners) do
 		local sp, onScreen = Camera:WorldToViewportPoint(c)
-		if onScreen or sp.Z > 0 then   -- include corners behind camera edge too
+		if onScreen or sp.Z > 0 then
 			anyOnScreen = true
 			if sp.X < minX then minX = sp.X end
 			if sp.Y < minY then minY = sp.Y end
@@ -243,27 +235,31 @@ local function getBoundingBox2D(char)
 			if sp.Y > maxY then maxY = sp.Y end
 		end
 	end
-
 	if not anyOnScreen then return nil end
-
-	return {
-		minX   = minX,   minY   = minY,
-		maxX   = maxX,   maxY   = maxY,
-		width  = maxX - minX,
-		height = maxY - minY,
-	}
+	return { minX=minX, minY=minY, maxX=maxX, maxY=maxY, width=maxX-minX, height=maxY-minY }
 end
 
 -- ============================================================
--- HEALTH BAR COLOR  green → red
+-- HEALTH COLOR
 -- ============================================================
 local function healthColor(frac)
-	-- green (0,200,0) → red (200,0,0)
-	return Color3.fromRGB(
-		math.floor((1 - frac) * 200),
-		math.floor(frac * 200),
-		0
-	)
+	return Color3.fromRGB(math.floor((1-frac)*200), math.floor(frac*200), 0)
+end
+
+-- ============================================================
+-- WALL CHECK (ESP)
+-- ============================================================
+local espRayParams = RaycastParams.new()
+espRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function isVisible(char, hrp)
+	local exclude = { char }
+	local lc = LocalPlayer.Character
+	if lc then table.insert(exclude, lc) end
+	espRayParams.FilterDescendantsInstances = exclude
+	local result = workspace:Raycast(Camera.CFrame.Position, hrp.Position - Camera.CFrame.Position, espRayParams)
+	if not result then return true end
+	return result.Instance:IsDescendantOf(char)
 end
 
 -- ============================================================
@@ -271,20 +267,20 @@ end
 -- ============================================================
 local function getTracerOrigin()
 	local vp = Camera.ViewportSize
-	if Settings.TracerOrigin == "Top"    then return Vector2.new(vp.X/2, 0)       end
-	if Settings.TracerOrigin == "Center" then return Vector2.new(vp.X/2, vp.Y/2)  end
+	if Settings.TracerOrigin == "Top"    then return Vector2.new(vp.X/2, 0)      end
+	if Settings.TracerOrigin == "Center" then return Vector2.new(vp.X/2, vp.Y/2) end
 	return Vector2.new(vp.X/2, vp.Y)
 end
 
 -- ============================================================
--- AIM ASSIST FUNCTIONS  (must be before RenderStepped)
+-- AIM ASSIST
 -- ============================================================
-local aimFOVCircle  -- Drawing.Circle for the FOV ring
+local aimFOVCircle
 
 local function getAimFOVCircle()
 	if not aimFOVCircle then
-		aimFOVCircle          = Drawing.new("Circle")
-		aimFOVCircle.Filled   = false
+		aimFOVCircle           = Drawing.new("Circle")
+		aimFOVCircle.Filled    = false
 		aimFOVCircle.Thickness = Settings.AimFOVThickness
 		aimFOVCircle.NumSides  = 64
 		aimFOVCircle.Visible   = false
@@ -294,7 +290,7 @@ end
 
 local function getBestTarget()
 	local vp     = Camera.ViewportSize
-	local center = Vector2.new(vp.X / 2, vp.Y / 2)
+	local center = Vector2.new(vp.X/2, vp.Y/2)
 	local bestPlayer, bestDist = nil, math.huge
 
 	for _, player in ipairs(Players:GetPlayers()) do
@@ -306,8 +302,7 @@ local function getBestTarget()
 		local char = player.Character
 		if not char then continue end
 
-		local bone = char:FindFirstChild(Settings.AimBone)
-			or char:FindFirstChild("HumanoidRootPart")
+		local bone = char:FindFirstChild(Settings.AimBone) or char:FindFirstChild("HumanoidRootPart")
 		if not bone then continue end
 
 		local hum = char:FindFirstChildOfClass("Humanoid")
@@ -319,20 +314,17 @@ local function getBestTarget()
 		local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
 		if not onScreen then continue end
 
-		-- Wall check: skip this target if they're behind a wall
+		-- Wall check for aim
 		if Settings.AimWallCheck then
-			local hrp2 = char:FindFirstChild("HumanoidRootPart") or bone
-			local exclude = { char }
-			local localChar = LocalPlayer.Character
-			if localChar then table.insert(exclude, localChar) end
+			local hrp2   = char:FindFirstChild("HumanoidRootPart") or bone
+			local excl   = { char }
+			local lc     = LocalPlayer.Character
+			if lc then table.insert(excl, lc) end
 			local wp = RaycastParams.new()
 			wp.FilterType = Enum.RaycastFilterType.Exclude
-			wp.FilterDescendantsInstances = exclude
-			local origin = Camera.CFrame.Position
-			local result = workspace:Raycast(origin, hrp2.Position - origin, wp)
-			if result and not result.Instance:IsDescendantOf(char) then
-				continue  -- blocked by a wall, skip target
-			end
+			wp.FilterDescendantsInstances = excl
+			local res = workspace:Raycast(Camera.CFrame.Position, hrp2.Position - Camera.CFrame.Position, wp)
+			if res and not res.Instance:IsDescendantOf(char) then continue end
 		end
 
 		local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
@@ -341,53 +333,17 @@ local function getBestTarget()
 			bestPlayer = player
 		end
 	end
-
 	return bestPlayer
 end
 
 local function smoothAimAt(worldPos)
-	-- Get current camera look direction and desired look direction
-	local camCF    = Camera.CFrame
+	local camCF     = Camera.CFrame
 	local desiredCF = CFrame.lookAt(camCF.Position, worldPos)
-
-	-- Lerp the rotation only (keep position fixed)
-	local alpha = math.clamp(Settings.AimStrength / math.max(Settings.AimSmoothing, 1), 0, 1)
-
-	-- Temporarily set Scriptable, move, restore immediately
-	local prevType = Camera.CameraType
+	local alpha     = math.clamp(Settings.AimStrength / math.max(Settings.AimSmoothing, 1), 0, 1)
+	local prevType  = Camera.CameraType
 	Camera.CameraType = Enum.CameraType.Scriptable
-	Camera.CFrame = camCF:Lerp(desiredCF, alpha)
+	Camera.CFrame     = camCF:Lerp(desiredCF, alpha)
 	Camera.CameraType = prevType
-end
-
-local function releaseCamera()
-	if Camera.CameraType == Enum.CameraType.Scriptable then
-		Camera.CameraType = Enum.CameraType.Custom
-	end
-end
-
--- ============================================================
--- WALL CHECK
--- ============================================================
-local raycastParams = RaycastParams.new()
-raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function isVisible(char, hrp)
-	-- Build exclusion list: local character + target character
-	local exclude = { char }
-	local localChar = LocalPlayer.Character
-	if localChar then table.insert(exclude, localChar) end
-	raycastParams.FilterDescendantsInstances = exclude
-
-	local origin    = Camera.CFrame.Position
-	local direction = hrp.Position - origin
-
-	local result = workspace:Raycast(origin, direction, raycastParams)
-	-- If raycast hits nothing, or hits something inside the target character → visible
-	if not result then return true end
-	-- Check if the hit instance belongs to the target character
-	local hitInst = result.Instance
-	return hitInst:IsDescendantOf(char)
 end
 
 -- ============================================================
@@ -395,20 +351,16 @@ end
 -- ============================================================
 RunService.RenderStepped:Connect(function()
 	resetPool()
-
 	local tracerOrigin = getTracerOrigin()
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player == LocalPlayer then continue end
 		if not shouldShow(player) then continue end
-
 		local char = player.Character
 		if not char then continue end
-
 		local hrp = char:FindFirstChild("HumanoidRootPart")
 		if not hrp then continue end
 
-		-- Distance cull
 		local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
 		if Settings.MaxRenderDistance > 0 and dist > Settings.MaxRenderDistance then continue end
 
@@ -416,80 +368,62 @@ RunService.RenderStepped:Connect(function()
 		if not onScreen then continue end
 
 		local sp2D = Vector2.new(screenPos.X, screenPos.Y)
-
 		local _, _, tracerColor, boxColor, nameColor = getColors(player)
 
-		-- ── WALL CHECK ───────────────────────────────────────
-		local playerVisible = true
+		-- Wall check
 		if Settings.WallCheckEnabled then
-			playerVisible = isVisible(char, hrp)
-			-- If hidden and we should fully hide drawing elements → skip
-			if not playerVisible and Settings.WallCheckHideBox then continue end
-			-- If hidden, dim the colors
-			if not playerVisible then
+			local visible = isVisible(char, hrp)
+			if not visible and Settings.WallCheckHideBox then continue end
+			if not visible then
 				boxColor    = Settings.WallHiddenBoxColor
 				tracerColor = Settings.WallHiddenBoxColor
 				nameColor   = Settings.WallHiddenBoxColor
 			end
-			-- Manage highlight visibility
 			if highlights[player] then
-				if not playerVisible and Settings.WallCheckHideHL then
-					highlights[player].Enabled = false
-				else
-					highlights[player].Enabled = true
-				end
+				highlights[player].Enabled = not (not visible and Settings.WallCheckHideHL)
 			end
 		end
 
-		-- ── 2D BOX ──────────────────────────────────────────
+		-- 2D Box
 		local box
 		if Settings.BoxEnabled then
 			box = getBoundingBox2D(char)
 			if box then
 				local q = newQuad()
-				q.PointA = Vector2.new(box.minX, box.minY)
-				q.PointB = Vector2.new(box.maxX, box.minY)
-				q.PointC = Vector2.new(box.maxX, box.maxY)
-				q.PointD = Vector2.new(box.minX, box.maxY)
+				q.PointA    = Vector2.new(box.minX, box.minY)
+				q.PointB    = Vector2.new(box.maxX, box.minY)
+				q.PointC    = Vector2.new(box.maxX, box.maxY)
+				q.PointD    = Vector2.new(box.minX, box.maxY)
 				q.Color     = boxColor
 				q.Thickness = Settings.BoxThickness
 				q.Visible   = true
 			end
 		end
 
-		-- ── HEALTH BAR ───────────────────────────────────────
+		-- Health Bar
 		if Settings.HealthBarEnabled and box then
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			if hum then
-				local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-				local barX    = box.minX - 5
-				local barTop  = box.minY
-				local barBot  = box.maxY
-				local barH    = box.height
-				local fillBot = barBot
-				local fillTop = barBot - barH * frac
-
-				-- Background (dark)
-				local bg = newLine()
-				bg.From      = Vector2.new(barX, barTop)
-				bg.To        = Vector2.new(barX, barBot)
+				local frac   = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+				local barX   = box.minX - 5
+				local bg     = newLine()
+				bg.From      = Vector2.new(barX, box.minY)
+				bg.To        = Vector2.new(barX, box.maxY)
 				bg.Thickness = 4
 				bg.Color     = Color3.fromRGB(20, 20, 20)
 				bg.Visible   = true
-
-				-- Filled portion
-				local fill = newLine()
-				fill.From      = Vector2.new(barX, fillBot)
-				fill.To        = Vector2.new(barX, fillTop)
+				local fill   = newLine()
+				fill.From    = Vector2.new(barX, box.maxY)
+				fill.To      = Vector2.new(barX, box.maxY - box.height * frac)
 				fill.Thickness = 3
-				fill.Color     = healthColor(frac)
-				fill.Visible   = true
+				fill.Color   = healthColor(frac)
+				fill.Visible = true
 			end
 		end
 
-		-- ── NAME TAG ─────────────────────────────────────────
+		-- Name Tag
 		if Settings.NameTagEnabled and box then
-			local t = newText()
+			local t    = newText()
 			t.Text     = player.DisplayName
 			t.Color    = nameColor
 			t.Size     = 13
@@ -497,20 +431,20 @@ RunService.RenderStepped:Connect(function()
 			t.Visible  = true
 		end
 
-		-- ── DISTANCE LABEL ───────────────────────────────────
+		-- Distance Label
 		if Settings.DistanceLabelEnabled and box then
-			local label = string.format("[%d studs]", math.floor(dist))
-			local t = newText()
-			t.Text     = label
+			local lbl  = string.format("[%d studs]", math.floor(dist))
+			local t    = newText()
+			t.Text     = lbl
 			t.Color    = Color3.fromRGB(180, 180, 180)
 			t.Size     = 12
-			t.Position = Vector2.new(box.minX + box.width/2 - (#label * 3), box.maxY + 3)
+			t.Position = Vector2.new(box.minX + box.width/2 - (#lbl * 3), box.maxY + 3)
 			t.Visible  = true
 		end
 
-		-- ── TRACER ───────────────────────────────────────────
+		-- Tracer
 		if Settings.TracerEnabled then
-			local l = newLine()
+			local l     = newLine()
 			l.From      = tracerOrigin
 			l.To        = sp2D
 			l.Thickness = Settings.BoxThickness
@@ -519,16 +453,16 @@ RunService.RenderStepped:Connect(function()
 		end
 	end
 
-	-- ── FOV CIRCLE ───────────────────────────────────────────
-	local fovCircle = getAimFOVCircle()
-	local vp = Camera.ViewportSize
-	fovCircle.Position  = Vector2.new(vp.X / 2, vp.Y / 2)
-	fovCircle.Radius    = Settings.AimFOV
-	fovCircle.Color     = Settings.AimFOVColor
-	fovCircle.Thickness = Settings.AimFOVThickness
-	fovCircle.Visible   = Settings.AimFOVCircle and Settings.AimAssistEnabled
+	-- FOV Circle
+	local fovC          = getAimFOVCircle()
+	local vp            = Camera.ViewportSize
+	fovC.Position       = Vector2.new(vp.X/2, vp.Y/2)
+	fovC.Radius         = Settings.AimFOV
+	fovC.Color          = Settings.AimFOVColor
+	fovC.Thickness      = Settings.AimFOVThickness
+	fovC.Visible        = Settings.AimFOVCircle and Settings.AimAssistEnabled
 
-	-- ── AIM ASSIST ────────────────────────────────────────────
+	-- Aim Assist
 	if Settings.AimAssistEnabled and not isListeningForBind then
 		local holding = false
 		if typeof(aimBindKey) == "EnumItem" then
@@ -540,15 +474,10 @@ RunService.RenderStepped:Connect(function()
 		end
 		if holding then
 			local target = getBestTarget()
-			if target then
-				local tChar = target.Character
-				if tChar then
-					local bone = tChar:FindFirstChild(Settings.AimBone)
-						or tChar:FindFirstChild("HumanoidRootPart")
-					if bone then
-						smoothAimAt(bone.Position)
-					end
-				end
+			if target and target.Character then
+				local bone = target.Character:FindFirstChild(Settings.AimBone)
+					or target.Character:FindFirstChild("HumanoidRootPart")
+				if bone then smoothAimAt(bone.Position) end
 			end
 		end
 	end
@@ -559,37 +488,17 @@ end)
 -- ============================================================
 local function setupPlayer(player)
 	if player == LocalPlayer then return end
-
-	-- Apply ESP to an already-loaded character
 	local function applyToChar(char)
-		-- Wait until HumanoidRootPart exists (character may not be fully loaded)
-		local hrp = char:FindFirstChild("HumanoidRootPart")
-			or char:WaitForChild("HumanoidRootPart", 5)
+		local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 5)
 		if not hrp then return end
 		refreshHighlight(player)
 	end
-
-	-- Current character (player was already in-game when script loaded)
-	if player.Character then
-		applyToChar(player.Character)
-	end
-
-	-- Every future spawn / respawn
-	player.CharacterAdded:Connect(function(char)
-		applyToChar(char)
-	end)
+	if player.Character then applyToChar(player.Character) end
+	player.CharacterAdded:Connect(applyToChar)
 end
 
--- Players already in server when script runs
-for _, p in ipairs(Players:GetPlayers()) do
-	setupPlayer(p)
-end
-
--- Players who join after script loads
-Players.PlayerAdded:Connect(function(player)
-	setupPlayer(player)
-end)
-
+for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
+Players.PlayerAdded:Connect(setupPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	removeHighlight(player)
 	perPlayerOverride[player] = nil
@@ -597,194 +506,384 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- ============================================================
--- RAYFIELD UI
+-- MOVEMENT FEATURES
+-- ============================================================
+local movementState = { flyEnabled=false, noclipEnabled=false, infJumpEnabled=false }
+local flySpeed      = 50
+local flyBodyVel, flyBodyGyro, flyConn, noclipConn, infJumpConn
+
+local function startFly()
+	local char = LocalPlayer.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum then return end
+	hum.PlatformStand = true
+	flyBodyVel = Instance.new("BodyVelocity")
+	flyBodyVel.MaxForce = Vector3.new(1e5,1e5,1e5); flyBodyVel.Velocity = Vector3.zero
+	flyBodyVel.Parent = hrp
+	flyBodyGyro = Instance.new("BodyGyro")
+	flyBodyGyro.MaxTorque = Vector3.new(1e5,1e5,1e5); flyBodyGyro.P = 1e4
+	flyBodyGyro.CFrame = hrp.CFrame; flyBodyGyro.Parent = hrp
+	flyConn = RunService.RenderStepped:Connect(function()
+		if not movementState.flyEnabled then return end
+		local camCF = Camera.CFrame
+		local dir   = Vector3.zero
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += camCF.LookVector  end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= camCF.LookVector  end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= camCF.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += camCF.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.Space)       then dir += Vector3.new(0,1,0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0,1,0) end
+		flyBodyVel.Velocity  = dir.Magnitude > 0 and dir.Unit * flySpeed or Vector3.zero
+		flyBodyGyro.CFrame   = camCF
+	end)
+end
+
+local function stopFly()
+	if flyConn     then flyConn:Disconnect();     flyConn     = nil end
+	if flyBodyVel  then flyBodyVel:Destroy();      flyBodyVel  = nil end
+	if flyBodyGyro then flyBodyGyro:Destroy();     flyBodyGyro = nil end
+	local char = LocalPlayer.Character
+	if char then
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then hum.PlatformStand = false end
+	end
+end
+
+local function startNoclip()
+	noclipConn = RunService.Stepped:Connect(function()
+		local char = LocalPlayer.Character
+		if not char or not movementState.noclipEnabled then return end
+		for _, p in ipairs(char:GetDescendants()) do
+			if p:IsA("BasePart") then p.CanCollide = false end
+		end
+	end)
+end
+
+local function stopNoclip()
+	if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
+	local char = LocalPlayer.Character
+	if char then
+		for _, p in ipairs(char:GetDescendants()) do
+			if p:IsA("BasePart") then p.CanCollide = true end
+		end
+	end
+end
+
+local function startInfJump()
+	local char = LocalPlayer.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	infJumpConn = hum.StateChanged:Connect(function(_, new)
+		if movementState.infJumpEnabled and new == Enum.HumanoidStateType.Freefall then
+			task.wait(0.1)
+			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		end
+	end)
+end
+
+local function stopInfJump()
+	if infJumpConn then infJumpConn:Disconnect(); infJumpConn = nil end
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	if movementState.flyEnabled     then startFly()     end
+	if movementState.noclipEnabled  then startNoclip()  end
+	if movementState.infJumpEnabled then startInfJump() end
+end)
+
+-- ============================================================
+-- PLAYER TOOLS (Fling, WalkSpeed, JumpPower)
+-- ============================================================
+local function flingPlayer(target)
+	local char = LocalPlayer.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local tChar = target.Character
+	if not tChar then return end
+	local tHRP  = tChar:FindFirstChild("HumanoidRootPart")
+	if not tHRP then return end
+
+	-- Teleport our HRP on top of target then apply massive velocity
+	local origCF = hrp.CFrame
+	hrp.CFrame   = tHRP.CFrame
+
+	local fv = Instance.new("BodyVelocity")
+	fv.Velocity  = Vector3.new(math.random(-1,1)*1e4, 1e4, math.random(-1,1)*1e4)
+	fv.MaxForce  = Vector3.new(1e9, 1e9, 1e9)
+	fv.Parent    = tHRP
+
+	task.wait(0.15)
+	fv:Destroy()
+	hrp.CFrame = origCF
+end
+
+local function setWalkSpeed(player, speed)
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then hum.WalkSpeed = speed end
+end
+
+local function setJumpPower(player, power)
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then hum.JumpPower = power end
+end
+
+-- ============================================================
+-- RAYFIELD WINDOW — Remade UI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
 	Name            = "🌀 Phong Hub",
 	LoadingTitle    = "Phong Hub",
-	LoadingSubtitle = "ESP & Aim Assist",
-	Theme           = "Default",
+	LoadingSubtitle  = "by Phong",
+	Theme           = "Amethyst",  -- cleaner purple theme
 	ConfigurationSaving = { Enabled = false },
 	KeySystem       = false,
 })
 
 -- ─────────────────────────────────────────
--- TAB 1: Highlights
+-- TAB 1 — ESP
 -- ─────────────────────────────────────────
-local HLTab = Window:CreateTab("✨ Highlights", 4483362458)
+local ESPTab = Window:CreateTab("👁 ESP", 4483362458)
 
-HLTab:CreateSection("Toggle")
-HLTab:CreateToggle({
+ESPTab:CreateSection("Highlights")
+ESPTab:CreateToggle({
 	Name = "Enable Highlights", CurrentValue = Settings.HighlightEnabled, Flag = "HLEnabled",
 	Callback = function(v) Settings.HighlightEnabled = v; refreshAllHighlights() end,
 })
-
-HLTab:CreateSection("Transparency")
-HLTab:CreateSlider({
+ESPTab:CreateSlider({
 	Name = "Fill Transparency", Range = {0,1}, Increment = 0.05,
 	CurrentValue = Settings.FillTransparency, Flag = "FillTrans",
-	Callback = function(v)
-		Settings.FillTransparency = v
-		for _, hl in pairs(highlights) do hl.FillTransparency = v end
-	end,
+	Callback = function(v) Settings.FillTransparency = v; for _,h in pairs(highlights) do h.FillTransparency = v end end,
 })
-HLTab:CreateSlider({
+ESPTab:CreateSlider({
 	Name = "Outline Transparency", Range = {0,1}, Increment = 0.05,
 	CurrentValue = Settings.OutlineTransparency, Flag = "OutlineTrans",
-	Callback = function(v)
-		Settings.OutlineTransparency = v
-		for _, hl in pairs(highlights) do hl.OutlineTransparency = v end
-	end,
+	Callback = function(v) Settings.OutlineTransparency = v; for _,h in pairs(highlights) do h.OutlineTransparency = v end end,
 })
 
--- ─────────────────────────────────────────
--- TAB 2: Box & Tracers
--- ─────────────────────────────────────────
-local DrawTab = Window:CreateTab("📦 Box & Tracers", 4483362458)
-
-DrawTab:CreateSection("2D Box")
-DrawTab:CreateToggle({
+ESPTab:CreateSection("Box & Tracers")
+ESPTab:CreateToggle({
 	Name = "Enable 2D Box", CurrentValue = Settings.BoxEnabled, Flag = "BoxEnabled",
 	Callback = function(v) Settings.BoxEnabled = v end,
 })
-
-DrawTab:CreateSection("Tracers")
-DrawTab:CreateToggle({
+ESPTab:CreateToggle({
 	Name = "Enable Tracers", CurrentValue = Settings.TracerEnabled, Flag = "TracerEnabled",
 	Callback = function(v) Settings.TracerEnabled = v end,
 })
-DrawTab:CreateDropdown({
+ESPTab:CreateDropdown({
 	Name = "Tracer Origin", Options = {"Bottom","Center","Top"},
 	CurrentOption = {Settings.TracerOrigin}, MultipleOptions = false, Flag = "TracerOrigin",
-	Callback = function(v)
-		if type(v) == "table" then v = v[1] end
-		Settings.TracerOrigin = v
-	end,
+	Callback = function(v) if type(v)=="table" then v=v[1] end; Settings.TracerOrigin = v end,
 })
-
-DrawTab:CreateSection("Thickness (Box & Tracers)")
-DrawTab:CreateSlider({
-	Name = "Box / Tracer Thickness", Range = {1,5}, Increment = 1,
+ESPTab:CreateSlider({
+	Name = "Thickness", Range = {1,5}, Increment = 1,
 	CurrentValue = Settings.BoxThickness, Flag = "BoxThick",
 	Callback = function(v) Settings.BoxThickness = v end,
 })
 
--- ─────────────────────────────────────────
--- TAB 3: Labels
--- ─────────────────────────────────────────
-local LabelTab = Window:CreateTab("🏷️ Labels", 4483362458)
-
-LabelTab:CreateSection("Toggle Labels")
-LabelTab:CreateToggle({
+ESPTab:CreateSection("Labels")
+ESPTab:CreateToggle({
 	Name = "Health Bar", CurrentValue = Settings.HealthBarEnabled, Flag = "HealthBar",
 	Callback = function(v) Settings.HealthBarEnabled = v end,
 })
-LabelTab:CreateToggle({
-	Name = "Name Tag (DisplayName)", CurrentValue = Settings.NameTagEnabled, Flag = "NameTag",
+ESPTab:CreateToggle({
+	Name = "Name Tag", CurrentValue = Settings.NameTagEnabled, Flag = "NameTag",
 	Callback = function(v) Settings.NameTagEnabled = v end,
 })
-LabelTab:CreateToggle({
-	Name = "Distance Label [N studs]", CurrentValue = Settings.DistanceLabelEnabled, Flag = "DistLabel",
+ESPTab:CreateToggle({
+	Name = "Distance Label", CurrentValue = Settings.DistanceLabelEnabled, Flag = "DistLabel",
 	Callback = function(v) Settings.DistanceLabelEnabled = v end,
 })
-
-LabelTab:CreateSection("Render Distance")
-LabelTab:CreateSlider({
-	Name = "Max Render Distance (studs, 0=unlimited)", Range = {0, 2000}, Increment = 50,
+ESPTab:CreateSlider({
+	Name = "Max Render Distance (0 = unlimited)", Range = {0,2000}, Increment = 50,
 	CurrentValue = Settings.MaxRenderDistance, Flag = "MaxDist",
 	Callback = function(v) Settings.MaxRenderDistance = v end,
 })
 
 -- ─────────────────────────────────────────
--- TAB 4: Colors
+-- TAB 2 — Colors
 -- ─────────────────────────────────────────
 local ColorTab = Window:CreateTab("🎨 Colors", 4483362458)
 
-ColorTab:CreateSection("Separate Enemy / Team")
+ColorTab:CreateSection("Separate Colors")
 ColorTab:CreateToggle({
-	Name = "Separate Colors", CurrentValue = Settings.SeparateColors, Flag = "SepColors",
+	Name = "Enemy vs Team Colors", CurrentValue = Settings.SeparateColors, Flag = "SepColors",
 	Callback = function(v) Settings.SeparateColors = v; refreshAllHighlights() end,
 })
 
 ColorTab:CreateSection("Enemy")
-ColorTab:CreateColorPicker({ Name="Enemy Fill",    Color=Settings.EnemyFillColor,    Flag="EFill",    Callback=function(c) Settings.EnemyFillColor=c;    refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Enemy Outline", Color=Settings.EnemyOutlineColor, Flag="EOutline", Callback=function(c) Settings.EnemyOutlineColor=c; refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Enemy Box",     Color=Settings.EnemyBoxColor,     Flag="EBox",     Callback=function(c) Settings.EnemyBoxColor=c end })
-ColorTab:CreateColorPicker({ Name="Enemy Tracer",  Color=Settings.EnemyTracerColor,  Flag="ETracer",  Callback=function(c) Settings.EnemyTracerColor=c end })
-ColorTab:CreateColorPicker({ Name="Enemy Name Tag",Color=Settings.EnemyNameColor,    Flag="EName",    Callback=function(c) Settings.EnemyNameColor=c end })
+ColorTab:CreateColorPicker({ Name="Fill",    Color=Settings.EnemyFillColor,    Flag="EFill",    Callback=function(c) Settings.EnemyFillColor=c;    refreshAllHighlights() end })
+ColorTab:CreateColorPicker({ Name="Outline", Color=Settings.EnemyOutlineColor, Flag="EOut",     Callback=function(c) Settings.EnemyOutlineColor=c; refreshAllHighlights() end })
+ColorTab:CreateColorPicker({ Name="Box",     Color=Settings.EnemyBoxColor,     Flag="EBox",     Callback=function(c) Settings.EnemyBoxColor=c    end })
+ColorTab:CreateColorPicker({ Name="Tracer",  Color=Settings.EnemyTracerColor,  Flag="ETracer",  Callback=function(c) Settings.EnemyTracerColor=c  end })
+ColorTab:CreateColorPicker({ Name="Name",    Color=Settings.EnemyNameColor,    Flag="EName",    Callback=function(c) Settings.EnemyNameColor=c    end })
 
 ColorTab:CreateSection("Team")
-ColorTab:CreateColorPicker({ Name="Team Fill",    Color=Settings.TeamFillColor,    Flag="TFill",    Callback=function(c) Settings.TeamFillColor=c;    refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Team Outline", Color=Settings.TeamOutlineColor, Flag="TOutline", Callback=function(c) Settings.TeamOutlineColor=c; refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Team Box",     Color=Settings.TeamBoxColor,     Flag="TBox",     Callback=function(c) Settings.TeamBoxColor=c end })
-ColorTab:CreateColorPicker({ Name="Team Tracer",  Color=Settings.TeamTracerColor,  Flag="TTracer",  Callback=function(c) Settings.TeamTracerColor=c end })
-ColorTab:CreateColorPicker({ Name="Team Name Tag",Color=Settings.TeamNameColor,    Flag="TName",    Callback=function(c) Settings.TeamNameColor=c end })
+ColorTab:CreateColorPicker({ Name="Fill",    Color=Settings.TeamFillColor,    Flag="TFill",    Callback=function(c) Settings.TeamFillColor=c;    refreshAllHighlights() end })
+ColorTab:CreateColorPicker({ Name="Outline", Color=Settings.TeamOutlineColor, Flag="TOut",     Callback=function(c) Settings.TeamOutlineColor=c; refreshAllHighlights() end })
+ColorTab:CreateColorPicker({ Name="Box",     Color=Settings.TeamBoxColor,     Flag="TBox",     Callback=function(c) Settings.TeamBoxColor=c     end })
+ColorTab:CreateColorPicker({ Name="Tracer",  Color=Settings.TeamTracerColor,  Flag="TTracer",  Callback=function(c) Settings.TeamTracerColor=c  end })
+ColorTab:CreateColorPicker({ Name="Name",    Color=Settings.TeamNameColor,    Flag="TName",    Callback=function(c) Settings.TeamNameColor=c    end })
 
 -- ─────────────────────────────────────────
--- TAB 5: Team Check
+-- TAB 3 — Aim Assist
 -- ─────────────────────────────────────────
-local TeamTab = Window:CreateTab("🛡️ Team Check", 4483362458)
-TeamTab:CreateSection("Settings")
-TeamTab:CreateToggle({
-	Name = "Skip Teammates (Highlights, Box & Tracers)",
-	CurrentValue = Settings.TeamCheckEnabled, Flag = "TeamCheck",
-	Callback = function(v) Settings.TeamCheckEnabled = v; refreshAllHighlights() end,
-})
+local AimTab = Window:CreateTab("🎯 Aim Assist", 4483362458)
 
--- ─────────────────────────────────────────
--- TAB 5.5: Wall Check
--- ─────────────────────────────────────────
-local WallTab = Window:CreateTab("🧱 Wall Check", 4483362458)
-
-WallTab:CreateSection("Toggle")
-
-WallTab:CreateToggle({
-	Name         = "Enable Wall Check",
-	CurrentValue = Settings.WallCheckEnabled,
-	Flag         = "WallCheck",
-	Callback     = function(v)
-		Settings.WallCheckEnabled = v
-		-- Re-enable all highlights when turning off wall check
-		if not v then
-			for _, hl in pairs(highlights) do
-				hl.Enabled = true
-			end
-		end
+AimTab:CreateSection("Toggle")
+AimTab:CreateToggle({
+	Name = "Enable Aim Assist", CurrentValue = Settings.AimAssistEnabled, Flag = "AimEnabled",
+	Callback = function(v)
+		Settings.AimAssistEnabled = v
+		if not v and aimFOVCircle then aimFOVCircle.Visible = false end
 	end,
 })
 
-WallTab:CreateSection("Behind-Wall Behaviour")
+AimTab:CreateSection("Tuning")
+AimTab:CreateSlider({
+	Name = "Strength (0 = off, 1 = snap)", Range = {0,1}, Increment = 0.05,
+	CurrentValue = Settings.AimStrength, Flag = "AimStr",
+	Callback = function(v) Settings.AimStrength = v end,
+})
+AimTab:CreateSlider({
+	Name = "Smoothing (higher = smoother)", Range = {1,20}, Increment = 1,
+	CurrentValue = Settings.AimSmoothing, Flag = "AimSmooth",
+	Callback = function(v) Settings.AimSmoothing = v end,
+})
+AimTab:CreateSlider({
+	Name = "FOV Radius (px)", Range = {20,400}, Increment = 10,
+	CurrentValue = Settings.AimFOV, Flag = "AimFOV",
+	Callback = function(v) Settings.AimFOV = v end,
+})
+AimTab:CreateDropdown({
+	Name = "Target Bone", Options = {"Head","UpperTorso","HumanoidRootPart"},
+	CurrentOption = {Settings.AimBone}, MultipleOptions = false, Flag = "AimBone",
+	Callback = function(v) if type(v)=="table" then v=v[1] end; Settings.AimBone = v end,
+})
 
+AimTab:CreateSection("FOV Circle")
+AimTab:CreateToggle({
+	Name = "Show FOV Circle", CurrentValue = Settings.AimFOVCircle, Flag = "AimFOVCircle",
+	Callback = function(v) Settings.AimFOVCircle = v end,
+})
+AimTab:CreateColorPicker({
+	Name = "FOV Color", Color = Settings.AimFOVColor, Flag = "AimFOVCol",
+	Callback = function(c) Settings.AimFOVColor = c; if aimFOVCircle then aimFOVCircle.Color = c end end,
+})
+AimTab:CreateSlider({
+	Name = "FOV Thickness", Range = {1,4}, Increment = 1,
+	CurrentValue = Settings.AimFOVThickness, Flag = "AimFOVThick",
+	Callback = function(v) Settings.AimFOVThickness = v; if aimFOVCircle then aimFOVCircle.Thickness = v end end,
+})
+
+AimTab:CreateSection("Filters")
+AimTab:CreateToggle({
+	Name = "Skip Teammates", CurrentValue = false, Flag = "AimTeam",
+	Callback = function(v) Settings.AimTeamCheck = v end,
+})
+AimTab:CreateToggle({
+	Name = "Skip Players Behind Walls", CurrentValue = Settings.AimWallCheck, Flag = "AimWall",
+	Callback = function(v) Settings.AimWallCheck = v end,
+})
+
+AimTab:CreateSection("Keybind")
+
+local bindBtn = AimTab:CreateButton({
+	Name = "📌 Bind: [ " .. aimBindLabel .. " ]",
+	Callback = function() end,
+})
+
+local function updateBind()
+	bindBtn.Name = "📌 Bind: [ " .. aimBindLabel .. " ]"
+	Rayfield:Notify({ Title="✅ Bind Set", Content="Aim assist: "..aimBindLabel, Duration=3, Image=4483362458 })
+end
+
+local function quickBind(key, label)
+	aimBindKey = key; aimBindLabel = label; updateBind()
+end
+
+AimTab:CreateButton({
+	Name = "🎮 Set Keybind (click then press key)",
+	Callback = function()
+		if isListeningForBind then return end
+		isListeningForBind = true
+		Rayfield:Notify({ Title="⏳ Press a key...", Content="Keyboard keys only. Use Quick Binds for mouse.", Duration=5, Image=4483362458 })
+		task.wait(0.25)
+		local conn
+		conn = UserInputService.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			if input.KeyCode == Enum.KeyCode.Unknown then return end
+			aimBindLabel = tostring(input.KeyCode):gsub("Enum%.KeyCode%.","")
+			aimBindKey   = input.KeyCode
+			isListeningForBind = false
+			conn:Disconnect()
+			updateBind()
+		end)
+		task.delay(8, function()
+			if isListeningForBind then
+				isListeningForBind = false; conn:Disconnect()
+				Rayfield:Notify({ Title="Cancelled", Content="Kept: "..aimBindLabel, Duration=3, Image=4483362458 })
+			end
+		end)
+	end,
+})
+
+AimTab:CreateSection("Quick Binds")
+AimTab:CreateButton({ Name="🖱️ RMB",        Callback=function() quickBind(Enum.UserInputType.MouseButton2,"RMB")       end })
+AimTab:CreateButton({ Name="🖱️ LMB",        Callback=function() quickBind(Enum.UserInputType.MouseButton1,"LMB")       end })
+AimTab:CreateButton({ Name="⌨️ Left Alt",   Callback=function() quickBind(Enum.KeyCode.LeftAlt,   "LeftAlt")   end })
+AimTab:CreateButton({ Name="⌨️ Left Shift", Callback=function() quickBind(Enum.KeyCode.LeftShift, "LeftShift") end })
+AimTab:CreateButton({ Name="⌨️ Q",          Callback=function() quickBind(Enum.KeyCode.Q,         "Q")         end })
+AimTab:CreateButton({ Name="⌨️ E",          Callback=function() quickBind(Enum.KeyCode.E,         "E")         end })
+AimTab:CreateButton({ Name="⌨️ CapsLock",   Callback=function() quickBind(Enum.KeyCode.CapsLock,  "CapsLock")  end })
+
+-- ─────────────────────────────────────────
+-- TAB 4 — Wall Check
+-- ─────────────────────────────────────────
+local WallTab = Window:CreateTab("🧱 Wall Check", 4483362458)
+
+WallTab:CreateSection("ESP Wall Check")
 WallTab:CreateToggle({
-	Name         = "Hide Box & Tracer (behind wall)",
-	CurrentValue = Settings.WallCheckHideBox,
-	Flag         = "WallHideBox",
-	Callback     = function(v) Settings.WallCheckHideBox = v end,
+	Name = "Enable Wall Check", CurrentValue = Settings.WallCheckEnabled, Flag = "WallCheck",
+	Callback = function(v)
+		Settings.WallCheckEnabled = v
+		if not v then for _,h in pairs(highlights) do h.Enabled = true end end
+	end,
 })
-
 WallTab:CreateToggle({
-	Name         = "Hide Highlight (behind wall)",
-	CurrentValue = Settings.WallCheckHideHL,
-	Flag         = "WallHideHL",
-	Callback     = function(v) Settings.WallCheckHideHL = v end,
+	Name = "Hide Box & Tracer Behind Walls", CurrentValue = Settings.WallCheckHideBox, Flag = "WallHideBox",
+	Callback = function(v) Settings.WallCheckHideBox = v end,
 })
-
-WallTab:CreateParagraph({
-	Title   = "Dimmed Mode",
-	Content = "When Hide toggles are OFF, players behind walls are still drawn but their box, tracer and name are dimmed to a grey color so you can tell they're occluded.",
+WallTab:CreateToggle({
+	Name = "Hide Highlight Behind Walls", CurrentValue = Settings.WallCheckHideHL, Flag = "WallHideHL",
+	Callback = function(v) Settings.WallCheckHideHL = v end,
 })
-
-WallTab:CreateSection("Dimmed Color")
-
 WallTab:CreateColorPicker({
-	Name     = "Behind-Wall Color",
-	Color    = Settings.WallHiddenBoxColor,
-	Flag     = "WallHiddenColor",
+	Name = "Behind-Wall Dim Color", Color = Settings.WallHiddenBoxColor, Flag = "WallDimCol",
 	Callback = function(c) Settings.WallHiddenBoxColor = c end,
 })
 
 -- ─────────────────────────────────────────
--- TAB 6: Players (Override + Whitelist)
+-- TAB 5 — Team Check
+-- ─────────────────────────────────────────
+local TeamTab = Window:CreateTab("🛡 Team", 4483362458)
+
+TeamTab:CreateSection("Team Check")
+TeamTab:CreateToggle({
+	Name = "Skip Teammates (ESP)", CurrentValue = Settings.TeamCheckEnabled, Flag = "TeamCheck",
+	Callback = function(v) Settings.TeamCheckEnabled = v; refreshAllHighlights() end,
+})
+
+-- ─────────────────────────────────────────
+-- TAB 6 — Players
 -- ─────────────────────────────────────────
 local PlayersTab = Window:CreateTab("👤 Players", 4483362458)
 
@@ -793,7 +892,7 @@ local function getPlayerNames()
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer then table.insert(t, p.Name) end
 	end
-	if #t == 0 then table.insert(t, "(no players)") end
+	if #t == 0 then table.insert(t, "(empty)") end
 	return t
 end
 
@@ -819,434 +918,150 @@ local function getTarget()
 	return Players:FindFirstChild(name)
 end
 
-PlayersTab:CreateSection("Per-Player Override")
-
+PlayersTab:CreateSection("ESP Override")
 PlayersTab:CreateButton({
-	Name = "✅ Force ON for Selected",
+	Name = "✅ Force ESP ON",
 	Callback = function()
-		local p = getTarget()
-		if p then
-			perPlayerOverride[p] = true; refreshHighlight(p)
-			Rayfield:Notify({ Title="Force ON", Content=p.Name.." forced visible.", Duration=3, Image=4483362458 })
-		end
+		local p = getTarget(); if not p then return end
+		perPlayerOverride[p] = true; refreshHighlight(p)
+		Rayfield:Notify({ Title="ON", Content=p.Name.." forced visible.", Duration=3, Image=4483362458 })
 	end,
 })
 PlayersTab:CreateButton({
-	Name = "❌ Force OFF for Selected",
+	Name = "❌ Force ESP OFF",
 	Callback = function()
-		local p = getTarget()
-		if p then
-			perPlayerOverride[p] = false; removeHighlight(p)
-			Rayfield:Notify({ Title="Force OFF", Content=p.Name.." force hidden.", Duration=3, Image=4483362458 })
-		end
+		local p = getTarget(); if not p then return end
+		perPlayerOverride[p] = false; removeHighlight(p)
+		Rayfield:Notify({ Title="OFF", Content=p.Name.." hidden.", Duration=3, Image=4483362458 })
 	end,
 })
 PlayersTab:CreateButton({
-	Name = "🔁 Clear Override for Selected",
+	Name = "🔁 Clear Override",
 	Callback = function()
-		local p = getTarget()
-		if p then
-			perPlayerOverride[p] = nil; refreshHighlight(p)
-			Rayfield:Notify({ Title="Cleared", Content=p.Name.." back to default.", Duration=3, Image=4483362458 })
-		end
+		local p = getTarget(); if not p then return end
+		perPlayerOverride[p] = nil; refreshHighlight(p)
+		Rayfield:Notify({ Title="Cleared", Content=p.Name.." back to default.", Duration=3, Image=4483362458 })
 	end,
 })
 
-PlayersTab:CreateSection("Whitelist (silently skip)")
-
+PlayersTab:CreateSection("Whitelist")
 PlayersTab:CreateButton({
-	Name = "➕ Whitelist Selected Player",
+	Name = "➕ Whitelist (hide ESP)",
 	Callback = function()
-		local p = getTarget()
-		if p then
-			whitelist[p] = true; removeHighlight(p)
-			Rayfield:Notify({ Title="Whitelisted", Content=p.Name.." will be silently skipped.", Duration=3, Image=4483362458 })
-		end
+		local p = getTarget(); if not p then return end
+		whitelist[p] = true; removeHighlight(p)
+		Rayfield:Notify({ Title="Whitelisted", Content=p.Name.." skipped.", Duration=3, Image=4483362458 })
 	end,
 })
 PlayersTab:CreateButton({
 	Name = "➖ Remove from Whitelist",
 	Callback = function()
-		local p = getTarget()
-		if p then
-			whitelist[p] = nil; refreshHighlight(p)
-			Rayfield:Notify({ Title="Un-whitelisted", Content=p.Name.." removed from whitelist.", Duration=3, Image=4483362458 })
-		end
+		local p = getTarget(); if not p then return end
+		whitelist[p] = nil; refreshHighlight(p)
+		Rayfield:Notify({ Title="Removed", Content=p.Name.." un-whitelisted.", Duration=3, Image=4483362458 })
+	end,
+})
+
+PlayersTab:CreateSection("Fling")
+PlayersTab:CreateButton({
+	Name = "💥 Fling Selected Player",
+	Callback = function()
+		local p = getTarget(); if not p then return end
+		flingPlayer(p)
+		Rayfield:Notify({ Title="💥 Flung!", Content=p.Name.." has been flung.", Duration=3, Image=4483362458 })
 	end,
 })
 PlayersTab:CreateButton({
-	Name = "📋 Show Whitelist",
+	Name = "💥 Fling ALL Players",
 	Callback = function()
-		local names = {}
-		for pl in pairs(whitelist) do table.insert(names, pl.Name) end
-		local msg = #names > 0 and table.concat(names, ", ") or "None"
-		Rayfield:Notify({ Title="Whitelist", Content=msg, Duration=5, Image=4483362458 })
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer then flingPlayer(p) end
+		end
+		Rayfield:Notify({ Title="💥 Flung All!", Content="Everyone got flung.", Duration=3, Image=4483362458 })
 	end,
+})
+
+PlayersTab:CreateSection("WalkSpeed")
+PlayersTab:CreateSlider({
+	Name = "WalkSpeed for Selected", Range = {0, 200}, Increment = 5,
+	CurrentValue = 16, Flag = "TargetWalkSpeed",
+	Callback = function(v)
+		local p = getTarget(); if not p then return end
+		setWalkSpeed(p, v)
+	end,
+})
+PlayersTab:CreateButton({
+	Name = "⚡ Apply WalkSpeed",
+	Callback = function()
+		local p = getTarget(); if not p then return end
+		setWalkSpeed(p, Rayfield.Flags.TargetWalkSpeed or 16)
+		Rayfield:Notify({ Title="WalkSpeed", Content=p.Name.." WalkSpeed set.", Duration=2, Image=4483362458 })
+	end,
+})
+PlayersTab:CreateSlider({
+	Name = "MY WalkSpeed", Range = {0, 200}, Increment = 5,
+	CurrentValue = 16, Flag = "SelfWalkSpeed",
+	Callback = function(v) setWalkSpeed(LocalPlayer, v) end,
+})
+
+PlayersTab:CreateSection("JumpPower")
+PlayersTab:CreateSlider({
+	Name = "JumpPower for Selected", Range = {0, 400}, Increment = 10,
+	CurrentValue = 50, Flag = "TargetJumpPower",
+	Callback = function(v)
+		local p = getTarget(); if not p then return end
+		setJumpPower(p, v)
+	end,
+})
+PlayersTab:CreateButton({
+	Name = "🦘 Apply JumpPower",
+	Callback = function()
+		local p = getTarget(); if not p then return end
+		setJumpPower(p, Rayfield.Flags.TargetJumpPower or 50)
+		Rayfield:Notify({ Title="JumpPower", Content=p.Name.." JumpPower set.", Duration=2, Image=4483362458 })
+	end,
+})
+PlayersTab:CreateSlider({
+	Name = "MY JumpPower", Range = {0, 400}, Increment = 10,
+	CurrentValue = 50, Flag = "SelfJumpPower",
+	Callback = function(v) setJumpPower(LocalPlayer, v) end,
 })
 
 -- ─────────────────────────────────────────
--- TAB 7: Aim Assist
+-- TAB 7 — Movement
 -- ─────────────────────────────────────────
-local AimTab = Window:CreateTab("🎯 Aim Assist", 4483362458)
-
-AimTab:CreateSection("Toggle")
-
-AimTab:CreateToggle({
-	Name = "Enable Aim Assist",
-	CurrentValue = Settings.AimAssistEnabled,
-	Flag = "AimEnabled",
-	Callback = function(v)
-		Settings.AimAssistEnabled = v
-		if not v and aimFOVCircle then
-			aimFOVCircle.Visible = false
-		end
-		Rayfield:Notify({
-			Title   = v and "Aim Assist ON" or "Aim Assist OFF",
-			Content = v and "Hold RMB to snap to nearest target in FOV." or "Aim assist disabled.",
-			Duration = 3, Image = 4483362458,
-		})
-	end,
-})
-
-AimTab:CreateSection("Strength & Smoothing")
-
-AimTab:CreateSlider({
-	Name = "Strength (0 = off, 1 = instant snap)",
-	Range = {0, 1}, Increment = 0.05,
-	CurrentValue = Settings.AimStrength, Flag = "AimStrength",
-	Callback = function(v) Settings.AimStrength = v end,
-})
-
-AimTab:CreateSlider({
-	Name = "Smoothing (higher = slower, more natural)",
-	Range = {1, 20}, Increment = 1,
-	CurrentValue = Settings.AimSmoothing, Flag = "AimSmooth",
-	Callback = function(v) Settings.AimSmoothing = v end,
-})
-
-AimTab:CreateSection("FOV")
-
-AimTab:CreateSlider({
-	Name = "FOV Radius (pixels)",
-	Range = {20, 400}, Increment = 10,
-	CurrentValue = Settings.AimFOV, Flag = "AimFOV",
-	Callback = function(v) Settings.AimFOV = v end,
-})
-
-AimTab:CreateToggle({
-	Name = "Show FOV Circle",
-	CurrentValue = Settings.AimFOVCircle, Flag = "AimFOVCircle",
-	Callback = function(v) Settings.AimFOVCircle = v end,
-})
-
-AimTab:CreateColorPicker({
-	Name = "FOV Circle Color",
-	Color = Settings.AimFOVColor, Flag = "AimFOVColor",
-	Callback = function(c)
-		Settings.AimFOVColor = c
-		if aimFOVCircle then aimFOVCircle.Color = c end
-	end,
-})
-
-AimTab:CreateSlider({
-	Name = "FOV Circle Thickness",
-	Range = {1, 4}, Increment = 1,
-	CurrentValue = Settings.AimFOVThickness, Flag = "AimFOVThick",
-	Callback = function(v)
-		Settings.AimFOVThickness = v
-		if aimFOVCircle then aimFOVCircle.Thickness = v end
-	end,
-})
-
-AimTab:CreateSection("Target Bone")
-
-AimTab:CreateDropdown({
-	Name = "Aim Bone Target",
-	Options = { "Head", "UpperTorso", "HumanoidRootPart" },
-	CurrentOption = { Settings.AimBone },
-	MultipleOptions = false, Flag = "AimBone",
-	Callback = function(v)
-		if type(v) == "table" then v = v[1] end
-		Settings.AimBone = v
-	end,
-})
-
-AimTab:CreateSection("Team & Wall Check")
-
-AimTab:CreateToggle({
-	Name = "Skip Teammates (Aim Assist)",
-	CurrentValue = Settings.AimTeamCheck, Flag = "AimTeamCheck",
-	Callback = function(v) Settings.AimTeamCheck = v end,
-})
-
-AimTab:CreateToggle({
-	Name = "Skip Players Behind Walls",
-	CurrentValue = Settings.AimWallCheck, Flag = "AimWallCheck",
-	Callback = function(v) Settings.AimWallCheck = v end,
-})
-
-AimTab:CreateSection("Keybind")
-
--- Rayfield has no live-update paragraph/label. We use a disabled-style button name as display.
--- The real live display is kept via Notify on change, and the button name shows on open.
-local bindDisplayBtn = AimTab:CreateButton({
-	Name     = "📌 Bind: [ " .. aimBindLabel .. " ]",
-	Callback = function() end, -- display only
-})
-
-local function updateBindDisplay()
-	-- Update the display button name (Rayfield supports this via the returned object)
-	bindDisplayBtn.Name = "📌 Bind: [ " .. aimBindLabel .. " ]"
-	Rayfield:Notify({
-		Title   = "✅ Bind Set",
-		Content = "Aim assist activates on: " .. aimBindLabel,
-		Duration = 3,
-		Image   = 4483362458,
-	})
-end
-
-AimTab:CreateButton({
-	Name = "🎮 Set Keybind — click then press a key",
-	Callback = function()
-		if isListeningForBind then return end
-		isListeningForBind = true
-
-		Rayfield:Notify({
-			Title   = "⏳ Listening...",
-			Content = "Press any keyboard key. Use Quick Binds for mouse buttons.",
-			Duration = 5,
-			Image   = 4483362458,
-		})
-
-		task.wait(0.25) -- let the button click clear before we start listening
-
-		local conn
-		conn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-			if input.KeyCode == Enum.KeyCode.Unknown then return end
-
-			local label = tostring(input.KeyCode):gsub("Enum%.KeyCode%.", "")
-			aimBindKey        = input.KeyCode
-			aimBindLabel      = label
-			isListeningForBind = false
-			conn:Disconnect()
-			updateBindDisplay()
-		end)
-
-		task.delay(8, function()
-			if isListeningForBind then
-				isListeningForBind = false
-				conn:Disconnect()
-				Rayfield:Notify({
-					Title   = "Cancelled",
-					Content = "No key pressed. Keeping: " .. aimBindLabel,
-					Duration = 3,
-					Image   = 4483362458,
-				})
-			end
-		end)
-	end,
-})
-
-AimTab:CreateSection("Quick Binds")
-
-local function quickBind(key, label)
-	aimBindKey        = key
-	aimBindLabel      = label
-	updateBindDisplay()
-end
-
-AimTab:CreateButton({ Name = "🖱️ Right Mouse Button (RMB)", Callback = function() quickBind(Enum.UserInputType.MouseButton2, "RMB")       end })
-AimTab:CreateButton({ Name = "🖱️ Left Mouse Button (LMB)",  Callback = function() quickBind(Enum.UserInputType.MouseButton1, "LMB")       end })
-AimTab:CreateButton({ Name = "⌨️ Left Alt",                  Callback = function() quickBind(Enum.KeyCode.LeftAlt,            "LeftAlt")   end })
-AimTab:CreateButton({ Name = "⌨️ Left Shift",                Callback = function() quickBind(Enum.KeyCode.LeftShift,          "LeftShift") end })
-AimTab:CreateButton({ Name = "⌨️ Q",                         Callback = function() quickBind(Enum.KeyCode.Q,                  "Q")         end })
-AimTab:CreateButton({ Name = "⌨️ E",                         Callback = function() quickBind(Enum.KeyCode.E,                  "E")         end })
-AimTab:CreateButton({ Name = "⌨️ F",                         Callback = function() quickBind(Enum.KeyCode.F,                  "F")         end })
-AimTab:CreateButton({ Name = "⌨️ CapsLock",                  Callback = function() quickBind(Enum.KeyCode.CapsLock,           "CapsLock")  end })
-
--- ============================================================
--- MOVEMENT FEATURES
--- ============================================================
-local movementState = {
-	flyEnabled     = false,
-	noclipEnabled  = false,
-	infJumpEnabled = false,
-}
-
--- ── FLY ──────────────────────────────────────────────────────
-local flySpeed     = 50
-local flyBodyVel   = nil
-local flyBodyGyro  = nil
-local flyConn      = nil
-
-local function startFly()
-	local char = LocalPlayer.Character
-	if not char then return end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hrp or not hum then return end
-
-	hum.PlatformStand = true
-
-	flyBodyVel = Instance.new("BodyVelocity")
-	flyBodyVel.Velocity       = Vector3.zero
-	flyBodyVel.MaxForce       = Vector3.new(1e5, 1e5, 1e5)
-	flyBodyVel.Parent         = hrp
-
-	flyBodyGyro = Instance.new("BodyGyro")
-	flyBodyGyro.MaxTorque     = Vector3.new(1e5, 1e5, 1e5)
-	flyBodyGyro.P             = 1e4
-	flyBodyGyro.CFrame        = hrp.CFrame
-	flyBodyGyro.Parent        = hrp
-
-	flyConn = RunService.RenderStepped:Connect(function()
-		if not movementState.flyEnabled then return end
-		local camCF = Camera.CFrame
-		local moveDir = Vector3.zero
-
-		if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir += camCF.LookVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir -= camCF.LookVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir -= camCF.RightVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir += camCF.RightVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0,1,0) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir -= Vector3.new(0,1,0) end
-
-		if moveDir.Magnitude > 0 then
-			flyBodyVel.Velocity = moveDir.Unit * flySpeed
-		else
-			flyBodyVel.Velocity = Vector3.zero
-		end
-		flyBodyGyro.CFrame = camCF
-	end)
-end
-
-local function stopFly()
-	if flyConn then flyConn:Disconnect(); flyConn = nil end
-	if flyBodyVel  then flyBodyVel:Destroy();  flyBodyVel  = nil end
-	if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
-	local char = LocalPlayer.Character
-	if char then
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum then hum.PlatformStand = false end
-	end
-end
-
--- ── NOCLIP ───────────────────────────────────────────────────
-local noclipConn = nil
-
-local function startNoclip()
-	noclipConn = RunService.Stepped:Connect(function()
-		if not movementState.noclipEnabled then return end
-		local char = LocalPlayer.Character
-		if not char then return end
-		for _, part in ipairs(char:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = false
-			end
-		end
-	end)
-end
-
-local function stopNoclip()
-	if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
-	local char = LocalPlayer.Character
-	if char then
-		for _, part in ipairs(char:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = true
-			end
-		end
-	end
-end
-
--- ── INF JUMP ─────────────────────────────────────────────────
-local infJumpConn = nil
-
-local function startInfJump()
-	local char = LocalPlayer.Character
-	if not char then return end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return end
-	infJumpConn = hum.StateChanged:Connect(function(_, new)
-		if movementState.infJumpEnabled and new == Enum.HumanoidStateType.Freefall then
-			task.wait(0.1)
-			hum:ChangeState(Enum.HumanoidStateType.Jumping)
-		end
-	end)
-end
-
-local function stopInfJump()
-	if infJumpConn then infJumpConn:Disconnect(); infJumpConn = nil end
-end
-
--- Re-hook inf jump and fly on respawn
-LocalPlayer.CharacterAdded:Connect(function()
-	task.wait(0.5)
-	if movementState.flyEnabled     then startFly()     end
-	if movementState.noclipEnabled  then startNoclip()  end
-	if movementState.infJumpEnabled then startInfJump() end
-end)
-
--- ============================================================
--- TAB 8: Movement
--- ============================================================
 local MoveTab = Window:CreateTab("🚀 Movement", 4483362458)
 
 MoveTab:CreateSection("Fly")
-
 MoveTab:CreateToggle({
-	Name = "Enable Fly",
-	CurrentValue = false,
-	Flag = "FlyEnabled",
-	Callback = function(v)
-		movementState.flyEnabled = v
-		if v then startFly() else stopFly() end
-	end,
+	Name = "Enable Fly", CurrentValue = false, Flag = "FlyEnabled",
+	Callback = function(v) movementState.flyEnabled = v; if v then startFly() else stopFly() end end,
 })
-
 MoveTab:CreateSlider({
-	Name = "Fly Speed",
-	Range = {10, 300}, Increment = 10,
+	Name = "Fly Speed", Range = {10,300}, Increment = 10,
 	CurrentValue = flySpeed, Flag = "FlySpeed",
 	Callback = function(v) flySpeed = v end,
 })
-
-MoveTab:CreateParagraph({
-	Title   = "Fly Controls",
-	Content = "W/A/S/D = direction  |  Space = up  |  Left Ctrl = down",
-})
+MoveTab:CreateParagraph({ Title="Controls", Content="W/A/S/D · Space (up) · Left Ctrl (down)" })
 
 MoveTab:CreateSection("Noclip")
-
 MoveTab:CreateToggle({
-	Name = "Enable Noclip",
-	CurrentValue = false,
-	Flag = "NoclipEnabled",
-	Callback = function(v)
-		movementState.noclipEnabled = v
-		if v then startNoclip() else stopNoclip() end
-	end,
+	Name = "Enable Noclip", CurrentValue = false, Flag = "NoclipEnabled",
+	Callback = function(v) movementState.noclipEnabled = v; if v then startNoclip() else stopNoclip() end end,
 })
 
 MoveTab:CreateSection("Infinite Jump")
-
 MoveTab:CreateToggle({
-	Name = "Enable Infinite Jump",
-	CurrentValue = false,
-	Flag = "InfJump",
-	Callback = function(v)
-		movementState.infJumpEnabled = v
-		if v then startInfJump() else stopInfJump() end
-	end,
+	Name = "Enable Infinite Jump", CurrentValue = false, Flag = "InfJump",
+	Callback = function(v) movementState.infJumpEnabled = v; if v then startInfJump() else stopInfJump() end end,
 })
 
 -- ============================================================
 -- READY
 -- ============================================================
 Rayfield:Notify({
-	Title    = "Phong Hub Loaded",
-	Content  = "Welcome, " .. LocalPlayer.Name .. "!",
+	Title    = "🌀 Phong Hub",
+	Content  = "Loaded! Welcome, " .. LocalPlayer.Name .. ".",
 	Duration = 5,
 	Image    = 4483362458,
 })
