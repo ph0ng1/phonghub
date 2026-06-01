@@ -72,6 +72,13 @@ local Settings = {
 	AimFOVColor          = Color3.fromRGB(255, 255, 255),
 	AimFOVThickness      = 1,
 
+	-- Triggerbot
+	TriggerEnabled       = false,
+	TriggerDelay         = 0.05,
+	TriggerTeamCheck     = true,
+	TriggerWallCheck     = true,
+	TriggerBone          = "Head",
+
 	-- Wall Check (ESP)
 	WallCheckEnabled     = false,
 	WallCheckHideBox     = false,
@@ -478,6 +485,52 @@ RunService.RenderStepped:Connect(function()
 				local bone = target.Character:FindFirstChild(Settings.AimBone)
 					or target.Character:FindFirstChild("HumanoidRootPart")
 				if bone then smoothAimAt(bone.Position) end
+			end
+		end
+	end
+
+	-- Triggerbot
+	if Settings.TriggerEnabled then
+		local lc = LocalPlayer.Character
+		if lc then
+			local cam     = Camera.CFrame
+			local vp      = Camera.ViewportSize
+			local center  = Vector2.new(vp.X/2, vp.Y/2)
+			local ray     = Camera:ScreenPointToRay(center.X, center.Y)
+			local rp      = RaycastParams.new()
+			rp.FilterType = Enum.RaycastFilterType.Exclude
+			rp.FilterDescendantsInstances = { lc }
+			local result  = workspace:Raycast(ray.Origin, ray.Direction * 1000, rp)
+			if result and result.Instance then
+				local hit = result.Instance
+				-- Check if hit belongs to a player character
+				for _, player in ipairs(Players:GetPlayers()) do
+					if player == LocalPlayer then continue end
+					if Settings.TriggerTeamCheck and isTeammate(player) then continue end
+					local tChar = player.Character
+					if not tChar then continue end
+					if hit:IsDescendantOf(tChar) then
+						-- Wall check
+						if Settings.TriggerWallCheck then
+							local tHRP = tChar:FindFirstChild("HumanoidRootPart")
+							if tHRP then
+								local excl = {tChar, lc}
+								local wp   = RaycastParams.new()
+								wp.FilterType = Enum.RaycastFilterType.Exclude
+								wp.FilterDescendantsInstances = excl
+								local wr = workspace:Raycast(cam.Position, tHRP.Position - cam.Position, wp)
+								if wr then break end
+							end
+						end
+						-- Fire — simulate mouse click
+						task.delay(Settings.TriggerDelay, function()
+							if Settings.TriggerEnabled then
+								mouse1click()
+							end
+						end)
+						break
+					end
+				end
 			end
 		end
 	end
@@ -1436,6 +1489,58 @@ do
 end
 
 -- ──────────────────────────────────────────────────────────────
+-- PAGE: Triggerbot
+-- ──────────────────────────────────────────────────────────────
+local _, tbL, tbR = addPage("Triggerbot", "⚡")
+
+do
+	local card, ct, hdr = makeCard("Triggerbot", Color3.fromRGB(220, 60, 60), tbL, tbL)
+
+	-- Header toggle
+	local tbOn = Settings.TriggerEnabled
+	local tglT = Frame({ Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-48,0.5,-9), BackgroundColor3=tbOn and ACCENT or BORDER }, hdr)
+	Corner(9,tglT)
+	local knobT = Frame({ Size=UDim2.new(0,12,0,12), Position=tbOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6), BackgroundColor3=WHITE }, tglT)
+	Corner(6,knobT)
+	tglT.InputBegan:Connect(function(i)
+		if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		tbOn = not tbOn; Settings.TriggerEnabled = tbOn
+		TS:Create(tglT,  TweenInfo.new(0.15), {BackgroundColor3=tbOn and ACCENT or BORDER}):Play()
+		TS:Create(knobT, TweenInfo.new(0.15), {Position=tbOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6)}):Play()
+	end)
+
+	-- Delay slider
+	makeRow("Trigger Delay (ms)", ct)
+	makeSlider(50, 0, 500, function(v) Settings.TriggerDelay = v / 1000 end, ct)
+
+	-- Target bone
+	makeRow("Target Bone", ct)
+	makeDropdown({"Head","UpperTorso","HumanoidRootPart"}, Settings.TriggerBone, function(v)
+		Settings.TriggerBone = v
+	end, ct)
+
+	-- Filters
+	local r1 = makeRow("Team Check", ct)
+	makeToggle(Settings.TriggerTeamCheck, function(v) Settings.TriggerTeamCheck = v end, r1)
+
+	local r2 = makeRow("Wall Check", ct)
+	makeToggle(Settings.TriggerWallCheck, function(v) Settings.TriggerWallCheck = v end, r2)
+end
+
+do
+	local card, ct, hdr = makeCard("How It Works", Color3.fromRGB(120,120,120), tbR, tbR)
+	Label({
+		Size = UDim2.new(1,0,0,120),
+		Text = "Triggerbot automatically clicks when your crosshair is directly over an enemy.\n\nIt uses a raycast from the center of your screen. If it hits a player part, it fires after the set delay.\n\nNo keybind needed — just enable and play.",
+		TextColor3 = TEXTDIM,
+		Font = Enum.Font.SourceSans,
+		TextSize = 13,
+		TextWrapped = true,
+		BackgroundTransparency = 1,
+	}, ct)
+end
+
+-- ──────────────────────────────────────────────────────────────
 -- PAGE: Players
 -- ──────────────────────────────────────────────────────────────
 local _, plL, plR = addPage("Players", "👤")
@@ -1966,7 +2071,6 @@ end)
 
 -- ── Start on ESP page ─────────────────────────────────────────
 showPage("ESP")
-
 -- ============================================================
 -- SPLASH SCREEN
 -- ============================================================
