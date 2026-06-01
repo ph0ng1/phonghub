@@ -23,23 +23,23 @@ local LocalPlayer      = Players.LocalPlayer
 -- ============================================================
 local Settings = {
 	-- Highlights
-	HighlightEnabled     = true,
+	HighlightEnabled     = false,
 	FillTransparency     = 0.55,
 	OutlineTransparency  = 0.0,
 
 	-- 2D Box
-	BoxEnabled           = true,
+	BoxEnabled           = false,
 	BoxThickness         = 1,
 
 	-- Tracers
-	TracerEnabled        = true,
+	TracerEnabled        = false,
 	TracerOrigin         = "Bottom",
 	TracerThickness      = 1,
 
 	-- Labels
-	HealthBarEnabled     = true,
-	NameTagEnabled       = true,
-	DistanceLabelEnabled = true,
+	HealthBarEnabled     = false,
+	NameTagEnabled       = false,
+	DistanceLabelEnabled = false,
 
 	-- Logic
 	TeamCheckEnabled     = true,
@@ -126,7 +126,7 @@ end
 local function newText()
 	local t = acquireDrawing("Text")
 	t.Size         = 13
-	t.Font         = Drawing.Fonts.UI
+	t.Font = 0 -- Drawing.Fonts.UI (0 = UI font)
 	t.Outline      = true
 	t.OutlineColor = Color3.fromRGB(0, 0, 0)
 	return t
@@ -602,23 +602,49 @@ local function flingPlayer(target)
 	local char = LocalPlayer.Character
 	if not char then return end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum then return end
+
 	local tChar = target.Character
 	if not tChar then return end
-	local tHRP  = tChar:FindFirstChild("HumanoidRootPart")
+	local tHRP = tChar:FindFirstChild("HumanoidRootPart")
 	if not tHRP then return end
 
-	-- Teleport our HRP on top of target then apply massive velocity
-	local origCF = hrp.CFrame
-	hrp.CFrame   = tHRP.CFrame
+	-- Save original state
+	local origCF    = hrp.CFrame
+	local origPlatform = hum.PlatformStand
 
-	local fv = Instance.new("BodyVelocity")
-	fv.Velocity  = Vector3.new(math.random(-1,1)*1e4, 1e4, math.random(-1,1)*1e4)
-	fv.MaxForce  = Vector3.new(1e9, 1e9, 1e9)
-	fv.Parent    = tHRP
+	-- Step 1: disable our own collision so we can clip into target
+	hum.PlatformStand = true
+	for _, p in ipairs(char:GetDescendants()) do
+		if p:IsA("BasePart") then p.CanCollide = false end
+	end
+
+	-- Step 2: teleport directly onto target
+	hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0.5, 0)
+	task.wait(0.05)
+
+	-- Step 3: slam our OWN HRP with huge velocity — collision pushes target server-side
+	local bv = Instance.new("BodyVelocity")
+	bv.Velocity = Vector3.new(
+		math.random(-3, 3) * 100,
+		900,
+		math.random(-3, 3) * 100
+	)
+	bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+	bv.P        = 1e6
+	bv.Parent   = hrp
+
+	-- Step 4: briefly re-enable collision so we actually hit them
+	for _, p in ipairs(char:GetDescendants()) do
+		if p:IsA("BasePart") then p.CanCollide = true end
+	end
 
 	task.wait(0.15)
-	fv:Destroy()
+
+	-- Step 5: clean up and restore
+	bv:Destroy()
+	hum.PlatformStand = origPlatform
 	hrp.CFrame = origCF
 end
 
@@ -639,7 +665,84 @@ end
 -- ============================================================
 -- CUSTOM GUI  (SKECH-style: left sidebar + card panels)
 -- ============================================================
-local ACCENT    = Color3.fromRGB(0, 200, 255)   -- cyan accent
+local ACCENT = Color3.fromRGB(0, 200, 255)  -- default cyan, overridden by config
+
+-- Config save/load
+local CONFIG_FILE = "PhongHub_config.json"
+
+local function saveConfig()
+	local ok, json = pcall(function()
+		return game:GetService("HttpService"):JSONEncode({
+			accentR      = math.floor(ACCENT.R * 255),
+			accentG      = math.floor(ACCENT.G * 255),
+			accentB      = math.floor(ACCENT.B * 255),
+			aimBind      = aimBindLabel,
+			aimEnabled   = Settings.AimAssistEnabled,
+			aimStrength  = Settings.AimStrength,
+			aimSmoothing = Settings.AimSmoothing,
+			aimFOV       = Settings.AimFOV,
+			aimBone      = Settings.AimBone,
+			aimWall      = Settings.AimWallCheck,
+			aimTeam      = Settings.AimTeamCheck,
+			espHL        = Settings.HighlightEnabled,
+			espBox       = Settings.BoxEnabled,
+			espTracer    = Settings.TracerEnabled,
+			espHealth    = Settings.HealthBarEnabled,
+			espName      = Settings.NameTagEnabled,
+			espDist      = Settings.DistanceLabelEnabled,
+			wallCheck    = Settings.WallCheckEnabled,
+			teamCheck    = Settings.TeamCheckEnabled,
+		})
+	end)
+	if ok then pcall(writefile, CONFIG_FILE, json) end
+end
+
+local function loadConfig()
+	local ok, raw = pcall(readfile, CONFIG_FILE)
+	if not ok or not raw then return end
+	local ok2, cfg = pcall(function()
+		return game:GetService("HttpService"):JSONDecode(raw)
+	end)
+	if not ok2 or not cfg then return end
+	if cfg.accentR then
+		ACCENT = Color3.fromRGB(cfg.accentR, cfg.accentG or 200, cfg.accentB or 255)
+	end
+	aimBindLabel              = cfg.aimBind      or aimBindLabel
+	Settings.AimAssistEnabled = cfg.aimEnabled   or false
+	Settings.AimStrength      = cfg.aimStrength  or 0.5
+	Settings.AimSmoothing     = cfg.aimSmoothing or 6
+	Settings.AimFOV           = cfg.aimFOV       or 120
+	Settings.AimBone          = cfg.aimBone      or "Head"
+	Settings.AimWallCheck         = cfg.aimWall      == true
+	Settings.AimTeamCheck         = cfg.aimTeam      == true
+	Settings.HighlightEnabled     = cfg.espHL        == true
+	Settings.BoxEnabled           = cfg.espBox       == true
+	Settings.TracerEnabled        = cfg.espTracer    == true
+	Settings.HealthBarEnabled     = cfg.espHealth    == true
+	Settings.NameTagEnabled       = cfg.espName      == true
+	Settings.DistanceLabelEnabled = cfg.espDist      == true
+	Settings.WallCheckEnabled     = cfg.wallCheck    == true
+	Settings.TeamCheckEnabled     = cfg.teamCheck    ~= false  -- default true is fine
+	-- restore bind key from label
+	local keyMap = {
+		RMB="MouseButton2", LMB="MouseButton1",
+		Q="Q", E="E", F="F", R="R", X="X", C="C",
+		LeftAlt="LeftAlt", LeftShift="LeftShift",
+		LAlt="LeftAlt", LShift="LeftShift", Caps="CapsLock",
+	}
+	if cfg.aimBind == "RMB" then
+		aimBindKey = Enum.UserInputType.MouseButton2
+	elseif cfg.aimBind == "LMB" then
+		aimBindKey = Enum.UserInputType.MouseButton1
+	else
+		local kc = Enum.KeyCode[cfg.aimBind]
+		if kc then aimBindKey = kc end
+	end
+end
+
+-- Load config before building GUI
+pcall(loadConfig)
+
 local ACCENT2   = Color3.fromRGB(0, 150, 200)
 local BG        = Color3.fromRGB(10, 12, 18)
 local SIDEBAR   = Color3.fromRGB(14, 16, 24)
@@ -671,7 +774,7 @@ local function Label(props, parent)
 	local l = Instance.new("TextLabel")
 	l.BackgroundTransparency = 1
 	l.TextColor3 = TEXT
-	l.Font = Enum.Font.GothamBold
+	l.Font = Enum.Font.SourceSansBold
 	l.TextSize = 14
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	for k,v in pairs(props) do l[k]=v end
@@ -681,7 +784,7 @@ local function Btn(props, parent)
 	local b = Instance.new("TextButton")
 	b.BackgroundTransparency = 1
 	b.TextColor3 = TEXT
-	b.Font = Enum.Font.GothamBold
+	b.Font = Enum.Font.SourceSansBold
 	b.TextSize = 13
 	b.AutoButtonColor = false
 	for k,v in pairs(props) do b[k]=v end
@@ -707,17 +810,12 @@ local function ListLayout(spacing, p)
 	l.Padding = UDim.new(0, spacing)
 	l.Parent = p; return l
 end
-local function makeToggle(state, onToggle, parent, yOffset)
-	-- Returns a row frame with label+toggle
-	local row = Frame({
-		Size = UDim2.new(1,0,0,28),
-		BackgroundTransparency = 1,
-	}, parent)
+local function makeToggle(state, onToggle, parent)
 	local track = Frame({
 		Size = UDim2.new(0,36,0,18),
 		Position = UDim2.new(1,-36,0.5,-9),
 		BackgroundColor3 = state and ACCENT or BORDER,
-	}, row)
+	}, parent)
 	Corner(9, track)
 	local knob = Frame({
 		Size = UDim2.new(0,12,0,12),
@@ -735,7 +833,7 @@ local function makeToggle(state, onToggle, parent, yOffset)
 	track.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 then update(not on) end
 	end)
-	return row, update
+	return update
 end
 local function makeSlider(val, min, max, onSlide, parent)
 	local row = Frame({ Size=UDim2.new(1,0,0,28), BackgroundTransparency=1 }, parent)
@@ -759,23 +857,36 @@ local function makeSlider(val, min, max, onSlide, parent)
 		TextSize = 13,
 	}, row)
 	local dragging = false
+
 	track.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			sliderDragging = true   -- block GUI drag
+			draggingGui = false     -- force cancel any active GUI drag
+		end
 	end)
+
 	UIS.InputEnded:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			if dragging then
+				dragging = false
+				sliderDragging = false
+			end
+		end
 	end)
+
 	UIS.InputChanged:Connect(function(i)
 		if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local abs = track.AbsolutePosition
-			local sz  = track.AbsoluteSize
+			local abs  = track.AbsolutePosition
+			local sz   = track.AbsoluteSize
 			local frac = math.clamp((i.Position.X - abs.X) / sz.X, 0, 1)
-			local newVal = math.floor(min + frac*(max-min))
-			fill.Size = UDim2.new(frac,0,1,0)
-			valLabel.Text = tostring(newVal)
+			local newVal = math.floor(min + frac * (max - min))
+			fill.Size      = UDim2.new(frac, 0, 1, 0)
+			valLabel.Text  = tostring(newVal)
 			onSlide(newVal)
 		end
 	end)
+
 	return row
 end
 local function makeDropdown(options, current, onChange, parent)
@@ -793,7 +904,7 @@ local function makeDropdown(options, current, onChange, parent)
 		Text = current,
 		TextSize = 12,
 		TextColor3 = TEXTDIM,
-		Font = Enum.Font.Gotham,
+		Font = Enum.Font.SourceSans,
 	}, box)
 	local arr = Label({
 		Size = UDim2.new(0,16,1,0),
@@ -819,7 +930,7 @@ local function makeDropdown(options, current, onChange, parent)
 			Text = opt,
 			TextColor3 = TEXTDIM,
 			TextSize = 12,
-			Font = Enum.Font.Gotham,
+			Font = Enum.Font.SourceSans,
 			ZIndex = 10,
 		}, list)
 		ob.MouseButton1Click:Connect(function()
@@ -839,7 +950,7 @@ local function makeDropdown(options, current, onChange, parent)
 end
 local function makeRow(labelText, parent)
 	local row = Frame({ Size=UDim2.new(1,0,0,28), BackgroundTransparency=1 }, parent)
-	Label({ Size=UDim2.new(0.55,0,1,0), Text=labelText, Font=Enum.Font.Gotham, TextSize=13, TextColor3=TEXTDIM }, row)
+	Label({ Size=UDim2.new(0.55,0,1,0), Text=labelText, Font=Enum.Font.SourceSans, TextSize=13, TextColor3=TEXTDIM }, row)
 	return row
 end
 local function makeCard(title, iconColor, parent, listParent)
@@ -868,7 +979,7 @@ local function makeCard(title, iconColor, parent, listParent)
 		Position = UDim2.new(0,30,0,0),
 		Text = title,
 		TextSize = 14,
-		Font = Enum.Font.GothamBold,
+		Font = Enum.Font.SourceSansBold,
 		TextColor3 = WHITE,
 	}, header)
 	-- content
@@ -892,24 +1003,9 @@ local Main = Frame({
 Corner(10, Main)
 Stroke(BORDER, 1, Main)
 
--- drag
+-- drag — only triggered from the sidebar (not content area)
 local draggingGui, dragStart, startPos
-Main.InputBegan:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 then
-		draggingGui = true; dragStart = i.Position
-		startPos = Main.Position
-	end
-end)
-Main.InputEnded:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 then draggingGui = false end
-end)
-UIS.InputChanged:Connect(function(i)
-	if draggingGui and i.UserInputType == Enum.UserInputType.MouseMovement then
-		local delta = i.Position - dragStart
-		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X,
-		                          startPos.Y.Scale, startPos.Y.Offset+delta.Y)
-	end
-end)
+local sliderDragging = false  -- set true by any slider, blocks gui drag
 
 -- ── SIDEBAR ───────────────────────────────────────────────────
 local Sidebar = Frame({
@@ -918,6 +1014,38 @@ local Sidebar = Frame({
 }, Main)
 Corner(10, Sidebar)
 
+-- Attach drag to sidebar and tab header only (not content area)
+local function attachDrag(target)
+	target.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 and not sliderDragging then
+			draggingGui = true
+			dragStart   = i.Position
+			startPos    = Main.Position
+		end
+	end)
+	target.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			draggingGui = false
+		end
+	end)
+end
+
+UIS.InputChanged:Connect(function(i)
+	if draggingGui and not sliderDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = i.Position - dragStart
+		Main.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UIS.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingGui = false
+	end
+end)
+
 -- Logo area
 local logoArea = Frame({ Size=UDim2.new(1,0,0,70), BackgroundTransparency=1 }, Sidebar)
 Label({
@@ -925,7 +1053,7 @@ Label({
 	Position = UDim2.new(0,0,0,16),
 	Text = "PHONG",
 	TextSize = 22,
-	Font = Enum.Font.GothamBlack,
+	Font = Enum.Font.SourceSansBold,
 	TextColor3 = ACCENT,
 	TextXAlignment = Enum.TextXAlignment.Center,
 }, logoArea)
@@ -934,7 +1062,7 @@ Label({
 	Position = UDim2.new(0,0,0,44),
 	Text = "HUB",
 	TextSize = 11,
-	Font = Enum.Font.Gotham,
+	Font = Enum.Font.SourceSans,
 	TextColor3 = TEXTDIM,
 	TextXAlignment = Enum.TextXAlignment.Center,
 }, logoArea)
@@ -951,6 +1079,9 @@ local navContainer = Frame({
 Padding(10, navContainer)
 ListLayout(4, navContainer)
 
+-- Attach drag to sidebar now that it exists
+attachDrag(Sidebar)
+
 -- ── CONTENT AREA ─────────────────────────────────────────────
 local ContentArea = Frame({
 	Size = UDim2.new(1,-170,1,0),
@@ -963,22 +1094,31 @@ local tabHeader = Frame({
 	Size = UDim2.new(1,0,0,44),
 	BackgroundColor3 = SIDEBAR,
 }, ContentArea)
+
+-- Attach drag to tab header too
+attachDrag(tabHeader)
 local tabTitle = Label({
 	Size = UDim2.new(1,0,1,0),
 	Text = "ESP",
 	TextSize = 16,
-	Font = Enum.Font.GothamBold,
+	Font = Enum.Font.SourceSansBold,
 	TextColor3 = TEXT,
 	TextXAlignment = Enum.TextXAlignment.Center,
 }, tabHeader)
 
 -- Scrollable panels area
-local PanelArea = Frame({
-	Size = UDim2.new(1,-20,1,-54),
-	Position = UDim2.new(0,10,0,54),
-	BackgroundTransparency = 1,
-	ClipsDescendants = true,
-}, ContentArea)
+local PanelArea = Instance.new("ScrollingFrame")
+PanelArea.Size                  = UDim2.new(1,-20,1,-54)
+PanelArea.Position              = UDim2.new(0,10,0,54)
+PanelArea.BackgroundTransparency = 1
+PanelArea.ClipsDescendants      = true
+PanelArea.ScrollBarThickness    = 4
+PanelArea.ScrollBarImageColor3  = ACCENT
+PanelArea.BorderSizePixel       = 0
+PanelArea.CanvasSize            = UDim2.new(0,0,0,0)  -- auto updated per page
+PanelArea.ScrollingDirection    = Enum.ScrollingDirection.Y
+PanelArea.ElasticBehavior       = Enum.ElasticBehavior.Never
+PanelArea.Parent                = ContentArea
 
 -- ── PAGE SYSTEM ──────────────────────────────────────────────
 local pages    = {}   -- name → Frame
@@ -994,6 +1134,21 @@ local function showPage(name)
 	end
 	tabTitle.Text = name
 	activePage = name
+	-- Reset scroll and update canvas height for the new page
+	PanelArea.CanvasPosition = Vector2.zero
+	task.defer(function()
+		local pg = pages[name]
+		if not pg then return end
+		-- Measure tallest column
+		local maxH = 0
+		for _, col in ipairs(pg:GetChildren()) do
+			if col:IsA("Frame") then
+				local h = col.AbsoluteSize.Y
+				if h > maxH then maxH = h end
+			end
+		end
+		PanelArea.CanvasSize = UDim2.new(0, 0, 0, maxH + 20)
+	end)
 end
 
 local function addPage(name, icon)
@@ -1005,7 +1160,7 @@ local function addPage(name, icon)
 		BackgroundColor3 = CARD2,
 		BackgroundTransparency = 1,
 		TextColor3 = TEXTDIM,
-		Font = Enum.Font.GothamBold,
+		Font = Enum.Font.SourceSansBold,
 		TextSize = 13,
 	}, navContainer)
 	Corner(6, btn)
@@ -1018,27 +1173,45 @@ local function addPage(name, icon)
 	btn.MouseLeave:Connect(function()
 		if activePage ~= name then btn.TextColor3 = TEXTDIM end
 	end)
-	-- page frame (two-column grid)
+	-- page frame — sits inside the ScrollingFrame, auto height
 	local pg = Frame({
-		Size = UDim2.new(1,0,1,0),
+		Size = UDim2.new(1,0,0,0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		Visible = false,
 	}, PanelArea)
 	pages[name] = pg
-	-- left column
+	-- left column — auto height
 	local leftCol = Frame({
-		Size = UDim2.new(0.5,-5,1,0),
+		Size = UDim2.new(0.5,-5,0,0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
-		AutomaticSize = Enum.AutomaticSize.None,
 	}, pg)
 	ListLayout(10, leftCol)
-	-- right column
+	-- right column — auto height
 	local rightCol = Frame({
-		Size = UDim2.new(0.5,-5,1,0),
+		Size = UDim2.new(0.5,-5,0,0),
 		Position = UDim2.new(0.5,5,0,0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 	}, pg)
 	ListLayout(10, rightCol)
+	-- Auto-update CanvasSize whenever column content changes height
+	local function updateCanvas()
+		if activePage ~= name then return end
+		task.defer(function()
+			local maxH = 0
+			for _, col in ipairs(pg:GetChildren()) do
+				if col:IsA("Frame") then
+					local h = col.AbsoluteSize.Y
+					if h > maxH then maxH = h end
+				end
+			end
+			PanelArea.CanvasSize = UDim2.new(0, 0, 0, maxH + 20)
+		end)
+	end
+	leftCol:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCanvas)
+	rightCol:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCanvas)
 	return pg, leftCol, rightCol
 end
 
@@ -1050,27 +1223,26 @@ local _, espL, espR = addPage("ESP", "👁")
 -- Card: Highlights
 do
 	local card, ct, hdr = makeCard("Highlights", ACCENT, espL, espL)
-	local _, updHL = makeToggle(Settings.HighlightEnabled, function(v)
-		Settings.HighlightEnabled = v; refreshAllHighlights()
-	end, ct)
-	-- toggle label
-	local r1 = makeRow("Enable Highlights", ct); r1.LayoutOrder=-1
-	-- fill trans slider
-	local r2 = makeRow("Fill Transparency", ct)
-	makeSlider(55, 0, 100, function(v) Settings.FillTransparency = v/100; for _,h in pairs(highlights) do h.FillTransparency=v/100 end end, ct)
-	-- toggle in header
-	local tgl = Frame({ Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-48,0.5,-9), BackgroundColor3=ACCENT }, hdr)
-	Corner(9,tgl)
-	local knob2 = Frame({ Size=UDim2.new(0,12,0,12), Position=UDim2.new(1,-15,0.5,-6), BackgroundColor3=WHITE }, tgl)
-	Corner(6,knob2)
+	-- header toggle
 	local hlOn = Settings.HighlightEnabled
+	local tgl = Frame({ Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-48,0.5,-9), BackgroundColor3=hlOn and ACCENT or BORDER }, hdr)
+	Corner(9,tgl)
+	local knob2 = Frame({ Size=UDim2.new(0,12,0,12), Position=hlOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6), BackgroundColor3=WHITE }, tgl)
+	Corner(6,knob2)
 	tgl.InputBegan:Connect(function(i)
 		if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		hlOn = not hlOn
 		Settings.HighlightEnabled = hlOn; refreshAllHighlights()
-		TS:Create(tgl, TweenInfo.new(0.15), {BackgroundColor3=hlOn and ACCENT or BORDER}):Play()
+		TS:Create(tgl,   TweenInfo.new(0.15), {BackgroundColor3=hlOn and ACCENT or BORDER}):Play()
 		TS:Create(knob2, TweenInfo.new(0.15), {Position=hlOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6)}):Play()
 	end)
+	-- rows
+	local r1 = makeRow("Enable Highlights", ct)
+	makeToggle(hlOn, function(v) hlOn=v; Settings.HighlightEnabled=v; refreshAllHighlights() end, r1)
+	makeRow("Fill Transparency", ct)
+	makeSlider(55, 0, 100, function(v) Settings.FillTransparency=v/100; for _,h in pairs(highlights) do h.FillTransparency=v/100 end end, ct)
+	makeRow("Outline Transparency", ct)
+	makeSlider(0, 0, 100, function(v) Settings.OutlineTransparency=v/100; for _,h in pairs(highlights) do h.OutlineTransparency=v/100 end end, ct)
 end
 
 -- Card: Box & Tracers
@@ -1166,6 +1338,7 @@ do
 	local function doQuickBind(key, label)
 		aimBindKey = key; aimBindLabel = label
 		bindLbl.Text = "[ "..label.." ]"
+		saveConfig()
 	end
 
 	local setBtnRow = Frame({ Size=UDim2.new(1,0,0,30), BackgroundTransparency=1 }, ct)
@@ -1181,25 +1354,44 @@ do
 	setBtn.MouseButton1Click:Connect(function()
 		if isListeningForBind then return end
 		isListeningForBind = true
-		setBtn.Text = "⏳ Press any key..."
+		setBtn.Text = "⏳ Press key or mouse btn..."
 		setBtn.TextColor3 = ACCENT
-		task.wait(0.25)
+		task.wait(0.3)
 		local conn
-		conn = UIS.InputBegan:Connect(function(inp)
-			if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-			if inp.KeyCode == Enum.KeyCode.Unknown then return end
-			local lbl = tostring(inp.KeyCode):gsub("Enum%.KeyCode%.","")
-			aimBindKey = inp.KeyCode; aimBindLabel = lbl
+		conn = UIS.InputBegan:Connect(function(inp, gp)
+			-- Accept keyboard keys and mouse buttons, skip unknown/UI events
+			local isMouse = inp.UserInputType == Enum.UserInputType.MouseButton1
+				or inp.UserInputType == Enum.UserInputType.MouseButton2
+				or inp.UserInputType == Enum.UserInputType.MouseButton3
+			local isKey = inp.UserInputType == Enum.UserInputType.Keyboard
+				and inp.KeyCode ~= Enum.KeyCode.Unknown
+
+			if not isMouse and not isKey then return end
+
+			local lbl
+			if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+				lbl = "LMB"; aimBindKey = Enum.UserInputType.MouseButton1
+			elseif inp.UserInputType == Enum.UserInputType.MouseButton2 then
+				lbl = "RMB"; aimBindKey = Enum.UserInputType.MouseButton2
+			elseif inp.UserInputType == Enum.UserInputType.MouseButton3 then
+				lbl = "MMB"; aimBindKey = Enum.UserInputType.MouseButton3
+			else
+				lbl = tostring(inp.KeyCode):gsub("Enum%.KeyCode%.","")
+				aimBindKey = inp.KeyCode
+			end
+
+			aimBindLabel = lbl
 			bindLbl.Text = "[ "..lbl.." ]"
 			isListeningForBind = false
-			setBtn.Text = "🎮 Click then press key"
+			setBtn.Text = "🎮 Click then press key / mouse"
 			setBtn.TextColor3 = TEXT
 			conn:Disconnect()
+			saveConfig()
 		end)
 		task.delay(8, function()
 			if isListeningForBind then
 				isListeningForBind = false
-				setBtn.Text = "🎮 Click then press key"
+				setBtn.Text = "🎮 Click then press key / mouse"
 				setBtn.TextColor3 = TEXT
 				conn:Disconnect()
 			end
@@ -1220,7 +1412,7 @@ do
 	local grid = Frame({ Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1 }, ct)
 	local gl = Instance.new("UIGridLayout")
 	gl.CellSize = UDim2.new(0.23,-3,0,24)
-	gl.CellPaddingH = UDim.new(0,3); gl.CellPaddingV = UDim.new(0,3)
+	gl.CellPadding = UDim2.new(0,3,0,3)
 	gl.Parent = grid
 	for _, qb in ipairs(qbData) do
 		local b = Btn({ Size=UDim2.new(0,1,0,24), Text=qb[1], BackgroundColor3=CARD2, TextColor3=TEXTDIM, TextSize=11 }, grid)
@@ -1264,7 +1456,7 @@ do
 		Size = UDim2.new(1,0,0,20),
 		Text = "None selected",
 		TextColor3 = TEXTDIM,
-		Font = Enum.Font.Gotham,
+		Font = Enum.Font.SourceSans,
 		TextSize = 12,
 	}, ct)
 
@@ -1280,7 +1472,7 @@ do
 				BackgroundColor3 = CARD2,
 				TextColor3 = TEXTDIM,
 				TextSize = 12,
-				Font = Enum.Font.Gotham,
+				Font = Enum.Font.SourceSans,
 			}, listFrame)
 			Corner(4, pb)
 			pb.MouseButton1Click:Connect(function()
@@ -1392,7 +1584,7 @@ do
 	end)
 	makeRow("Fly Speed", ct)
 	makeSlider(flySpeed, 10, 300, function(v) flySpeed=v end, ct)
-	Label({ Size=UDim2.new(1,0,0,20), Text="W/A/S/D · Space (up) · LCtrl (down)", TextColor3=TEXTDIM, Font=Enum.Font.Gotham, TextSize=11 }, ct)
+	Label({ Size=UDim2.new(1,0,0,20), Text="W/A/S/D · Space (up) · LCtrl (down)", TextColor3=TEXTDIM, Font=Enum.Font.SourceSans, TextSize=11 }, ct)
 end
 
 do
@@ -1450,22 +1642,325 @@ do
 		{"Tracer",  function(c) Settings.EnemyTracerColor=c  end},
 	}
 	for _, cd in ipairs(colorDefs) do
-		Label({ Size=UDim2.new(1,0,0,20), Text=cd[1], TextColor3=TEXTDIM, Font=Enum.Font.Gotham, TextSize=13 }, ct)
+		Label({ Size=UDim2.new(1,0,0,20), Text=cd[1], TextColor3=TEXTDIM, Font=Enum.Font.SourceSans, TextSize=13 }, ct)
 	end
-	Label({ Size=UDim2.new(1,0,0,20), Text="(Use executor color picker for custom colors)", TextColor3=TEXTDIM, Font=Enum.Font.Gotham, TextSize=11 }, ct)
+	Label({ Size=UDim2.new(1,0,0,20), Text="(Use executor color picker for custom colors)", TextColor3=TEXTDIM, Font=Enum.Font.SourceSans, TextSize=11 }, ct)
 end
 
 do
 	local card, ct, hdr = makeCard("Team Colors", Color3.fromRGB(60,160,255), tmR, tmR)
-	Label({ Size=UDim2.new(1,0,0,20), Text="Fill / Outline / Box / Tracer", TextColor3=TEXTDIM, Font=Enum.Font.Gotham, TextSize=13 }, ct)
-	Label({ Size=UDim2.new(1,0,0,20), Text="(Use executor color picker for custom colors)", TextColor3=TEXTDIM, Font=Enum.Font.Gotham, TextSize=11 }, ct)
+	Label({ Size=UDim2.new(1,0,0,20), Text="Fill / Outline / Box / Tracer", TextColor3=TEXTDIM, Font=Enum.Font.SourceSans, TextSize=13 }, ct)
+	Label({ Size=UDim2.new(1,0,0,20), Text="(Use executor color picker for custom colors)", TextColor3=TEXTDIM, Font=Enum.Font.SourceSans, TextSize=11 }, ct)
 end
 
--- ── Toggle GUI with RightAlt ──────────────────────────────────
+-- ──────────────────────────────────────────────────────────────
+-- SPIN JUKE SYSTEM
+-- ──────────────────────────────────────────────────────────────
+local spinBindKey      = Enum.KeyCode.Q
+local spinBindLabel    = "Q"
+local spinEnabled      = false
+local spinAngle        = 45
+local spinSpeed        = 0.04
+local isSpinning       = false
+local isListeningSpin  = false
+
+local function doSpin()
+	if isSpinning then return end
+	local char = LocalPlayer.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	isSpinning = true
+
+	local rad = math.rad(spinAngle)
+
+	-- one clean snap: left → right → back to center
+	local function rotCam(angle)
+		local prevType = Camera.CameraType
+		Camera.CameraType = Enum.CameraType.Scriptable
+		Camera.CFrame = Camera.CFrame * CFrame.Angles(0, angle, 0)
+		Camera.CameraType = prevType
+	end
+
+	rotCam(rad)            -- snap left
+	task.wait(spinSpeed)
+	rotCam(-rad * 2)       -- snap right (overshoot)
+	task.wait(spinSpeed)
+	rotCam(rad)            -- return to center
+
+	isSpinning = false
+end
+
+UIS.InputBegan:Connect(function(i, gp)
+	if gp then return end
+	if not spinEnabled then return end
+	if isListeningSpin then return end
+	if typeof(spinBindKey) == "EnumItem" then
+		if spinBindKey.EnumType == Enum.KeyCode and i.KeyCode == spinBindKey then
+			task.spawn(doSpin)
+		elseif spinBindKey.EnumType == Enum.UserInputType and i.UserInputType == spinBindKey then
+			task.spawn(doSpin)
+		end
+	end
+end)
+
+-- ── Spin Juke UI Page ─────────────────────────────────────────
+local _, spL, spR = addPage("Spin Juke", "🌀")
+
+do
+	local card, ct, hdr = makeCard("Spin Juke", ACCENT, spL, spL)
+
+	-- header master toggle
+	local spOn = spinEnabled
+	local tglS = Frame({ Size=UDim2.new(0,36,0,18), Position=UDim2.new(1,-48,0.5,-9), BackgroundColor3=spOn and ACCENT or BORDER }, hdr)
+	Corner(9,tglS)
+	local knobS = Frame({ Size=UDim2.new(0,12,0,12), Position=spOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6), BackgroundColor3=WHITE }, tglS)
+	Corner(6,knobS)
+	tglS.InputBegan:Connect(function(i)
+		if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		spOn = not spOn; spinEnabled = spOn
+		TS:Create(tglS,  TweenInfo.new(0.15), {BackgroundColor3=spOn and ACCENT or BORDER}):Play()
+		TS:Create(knobS, TweenInfo.new(0.15), {Position=spOn and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6)}):Play()
+	end)
+
+	makeRow("Angle (degrees)", ct)
+	makeSlider(spinAngle, 10, 90, function(v) spinAngle = v end, ct)
+
+	makeRow("Speed (lower = faster)", ct)
+	makeSlider(4, 1, 20, function(v) spinSpeed = v / 100 end, ct)
+
+	-- keybind display
+	local bindRow = makeRow("Active Bind", ct)
+	local spinBindLbl = Label({
+		Size = UDim2.new(0,120,1,0),
+		Position = UDim2.new(1,-120,0,0),
+		Text = "[ "..spinBindLabel.." ]",
+		TextColor3 = ACCENT,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Font = Enum.Font.SourceSansBold,
+	}, bindRow)
+
+	local setBtnRow = Frame({ Size=UDim2.new(1,0,0,30), BackgroundTransparency=1 }, ct)
+	local setSpinBtn = Btn({
+		Size = UDim2.new(1,0,1,0),
+		Text = "🎮 Click then press key",
+		BackgroundColor3 = CARD2,
+		TextColor3 = TEXT,
+		TextSize = 12,
+		Font = Enum.Font.SourceSans,
+	}, setBtnRow)
+	Corner(6, setSpinBtn)
+	Stroke(BORDER, 1, setSpinBtn)
+
+	setSpinBtn.MouseButton1Click:Connect(function()
+		if isListeningSpin then return end
+		isListeningSpin = true
+		setSpinBtn.Text = "⏳ Press any key..."
+		setSpinBtn.TextColor3 = ACCENT
+		task.wait(0.25)
+		local conn
+		conn = UIS.InputBegan:Connect(function(inp)
+			if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			if inp.KeyCode == Enum.KeyCode.Unknown then return end
+			spinBindKey   = inp.KeyCode
+			spinBindLabel = tostring(inp.KeyCode):gsub("Enum%.KeyCode%.","")
+			spinBindLbl.Text = "[ "..spinBindLabel.." ]"
+			isListeningSpin = false
+			setSpinBtn.Text = "🎮 Click then press key"
+			setSpinBtn.TextColor3 = TEXT
+			conn:Disconnect()
+		end)
+		task.delay(8, function()
+			if isListeningSpin then
+				isListeningSpin = false
+				setSpinBtn.Text = "🎮 Click then press key"
+				setSpinBtn.TextColor3 = TEXT
+				conn:Disconnect()
+			end
+		end)
+	end)
+end
+
+-- Quick binds for spin
+do
+	local card, ct, hdr = makeCard("Quick Binds", Color3.fromRGB(255,200,0), spR, spR)
+	local qbData = {
+		{"Q",      Enum.KeyCode.Q},
+		{"E",      Enum.KeyCode.E},
+		{"F",      Enum.KeyCode.F},
+		{"R",      Enum.KeyCode.R},
+		{"X",      Enum.KeyCode.X},
+		{"C",      Enum.KeyCode.C},
+		{"LAlt",   Enum.KeyCode.LeftAlt},
+		{"LShift", Enum.KeyCode.LeftShift},
+	}
+	local grid = Frame({ Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1 }, ct)
+	local gl = Instance.new("UIGridLayout")
+	gl.CellSize    = UDim2.new(0.23,-3,0,26)
+	gl.CellPadding = UDim2.new(0,3,0,3)
+	gl.Parent      = grid
+	for _, qb in ipairs(qbData) do
+		local b = Btn({ Text=qb[1], BackgroundColor3=CARD2, TextColor3=TEXTDIM, TextSize=11, Font=Enum.Font.SourceSansBold }, grid)
+		Corner(4, b)
+		b.MouseButton1Click:Connect(function()
+			spinBindKey   = qb[2]
+			spinBindLabel = qb[1]
+			-- update label if visible
+		end)
+		b.MouseEnter:Connect(function() b.TextColor3=ACCENT end)
+		b.MouseLeave:Connect(function() b.TextColor3=TEXTDIM end)
+	end
+end
+
+-- ──────────────────────────────────────────────────────────────
+-- PAGE: Settings (GUI Color + Config)
+-- ──────────────────────────────────────────────────────────────
+local _, stL, stR = addPage("Settings", "⚙")
+
+-- We collect all accent-colored elements so we can repaint them
+local accentElements = {}  -- { obj, prop }
+local function trackAccent(obj, prop)
+	table.insert(accentElements, {obj=obj, prop=prop})
+end
+
+local function applyAccent(newColor)
+	ACCENT = newColor
+	PanelArea.ScrollBarImageColor3 = newColor
+	for _, e in ipairs(accentElements) do
+		pcall(function() e.obj[e.prop] = newColor end)
+	end
+end
+
+do
+	local card, ct, hdr = makeCard("GUI Accent Color", ACCENT, stL, stL)
+	trackAccent(hdr:FindFirstChildOfClass("Frame"), "BackgroundColor3") -- dot
+
+	-- Color presets
+	local presets = {
+		{"Cyan",    Color3.fromRGB(0,   200, 255)},
+		{"Red",     Color3.fromRGB(220, 50,  50)},
+		{"Green",   Color3.fromRGB(50,  220, 100)},
+		{"Purple",  Color3.fromRGB(160, 80,  255)},
+		{"Orange",  Color3.fromRGB(255, 140, 0)},
+		{"Pink",    Color3.fromRGB(255, 80,  180)},
+		{"White",   Color3.fromRGB(230, 230, 230)},
+		{"Gold",    Color3.fromRGB(255, 210, 0)},
+	}
+
+	local grid = Frame({ Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1 }, ct)
+	local gl = Instance.new("UIGridLayout")
+	gl.CellSize    = UDim2.new(0.23,-3,0,28)
+	gl.CellPadding = UDim2.new(0,3,0,3)
+	gl.Parent      = grid
+
+	for _, preset in ipairs(presets) do
+		local b = Btn({
+			Text = preset[1],
+			BackgroundColor3 = preset[2],
+			TextColor3 = Color3.fromRGB(0,0,0),
+			TextSize = 11,
+			Font = Enum.Font.SourceSansBold,
+		}, grid)
+		Corner(4, b)
+		b.MouseButton1Click:Connect(function()
+			applyAccent(preset[2])
+			saveConfig()
+		end)
+	end
+
+	-- Custom RGB sliders
+	local curR = math.floor(ACCENT.R*255)
+	local curG = math.floor(ACCENT.G*255)
+	local curB = math.floor(ACCENT.B*255)
+
+	makeRow("Red", ct)
+	makeSlider(curR, 0, 255, function(v) curR=v; applyAccent(Color3.fromRGB(curR,curG,curB)) end, ct)
+	makeRow("Green", ct)
+	makeSlider(curG, 0, 255, function(v) curG=v; applyAccent(Color3.fromRGB(curR,curG,curB)) end, ct)
+	makeRow("Blue", ct)
+	makeSlider(curB, 0, 255, function(v) curB=v; applyAccent(Color3.fromRGB(curR,curG,curB)) end, ct)
+end
+
+do
+	local card, ct, hdr = makeCard("Config", Color3.fromRGB(80,220,120), stR, stR)
+
+	local function makeActionBtn(label, cb)
+		local row = Frame({ Size=UDim2.new(1,0,0,32), BackgroundTransparency=1 }, ct)
+		local b = Btn({
+			Size = UDim2.new(1,0,1,0),
+			Text = label,
+			BackgroundColor3 = CARD2,
+			TextColor3 = TEXT,
+			TextSize = 13,
+			Font = Enum.Font.SourceSansBold,
+		}, row)
+		Corner(6, b); Stroke(BORDER, 1, b)
+		b.MouseButton1Click:Connect(function()
+			cb()
+			b.Text = "✅ Done!"
+			b.TextColor3 = ACCENT
+			task.delay(1.5, function() b.Text = label; b.TextColor3 = TEXT end)
+		end)
+		b.MouseEnter:Connect(function() b.BackgroundColor3 = Color3.fromRGB(30,35,50) end)
+		b.MouseLeave:Connect(function() b.BackgroundColor3 = CARD2 end)
+	end
+
+	makeActionBtn("💾 Save Config", saveConfig)
+	makeActionBtn("📂 Load Config", function()
+		pcall(loadConfig)
+		applyAccent(ACCENT)
+	end)
+	makeActionBtn("🗑 Reset Config", function()
+		pcall(deletefile, CONFIG_FILE)
+		ACCENT = Color3.fromRGB(0, 200, 255)
+		applyAccent(ACCENT)
+	end)
+
+	Label({
+		Size = UDim2.new(1,0,0,40),
+		Text = "Config saves to:\nPhongHub_config.json",
+		TextColor3 = TEXTDIM,
+		Font = Enum.Font.SourceSans,
+		TextSize = 11,
+		TextWrapped = true,
+	}, ct)
+end
+
+-- ── Toggle GUI with smooth transition ────────────────────────
+Main.Visible = false
+Main.BackgroundTransparency = 1
+Main.Size = UDim2.new(0, 820, 0, 560)
+
+local guiOpen = false
+
+local function openGui()
+	if guiOpen then return end
+	guiOpen = true
+	Main.Visible = true
+	Main.Size = UDim2.new(0, 820, 0, 0)
+	Main.BackgroundTransparency = 1
+	TS:Create(Main, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+		Size = UDim2.new(0, 820, 0, 560),
+		BackgroundTransparency = 0,
+	}):Play()
+end
+
+local function closeGui()
+	if not guiOpen then return end
+	guiOpen = false
+	local t = TS:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+		Size = UDim2.new(0, 820, 0, 0),
+		BackgroundTransparency = 1,
+	})
+	t:Play()
+	t.Completed:Connect(function() Main.Visible = false end)
+end
+
 UIS.InputBegan:Connect(function(i, gp)
 	if gp then return end
 	if i.KeyCode == Enum.KeyCode.RightAlt then
-		Main.Visible = not Main.Visible
+		if guiOpen then closeGui() else openGui() end
 	end
 end)
 
@@ -1473,264 +1968,145 @@ end)
 showPage("ESP")
 
 -- ============================================================
--- READY notification (small, bottom corner)
+-- SPLASH SCREEN
 -- ============================================================
-local notif = Frame({
-	Size = UDim2.new(0,220,0,44),
-	Position = UDim2.new(1,-230,1,-54),
-	BackgroundColor3 = CARD,
-}, SG)
-Corner(8, notif)
-Stroke(ACCENT, 1, notif)
-Label({ Size=UDim2.new(1,-16,0.5,0), Position=UDim2.new(0,8,0,4), Text="🌀 Phong Hub loaded!", TextSize=13, Font=Enum.Font.GothamBold, TextColor3=ACCENT }, notif)
-Label({ Size=UDim2.new(1,-16,0.5,0), Position=UDim2.new(0,8,0.5,0), Text="RAlt to show/hide", TextSize=11, Font=Enum.Font.Gotham, TextColor3=TEXTDIM }, notif)
-TS:Create(notif, TweenInfo.new(0.4,Enum.EasingStyle.Quart,Enum.EasingDirection.Out,0,false,3), {Position=UDim2.new(1,-230,1,-54)}):Play()
-task.delay(4.5, function()
-	TS:Create(notif, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
-	task.wait(0.4); notif:Destroy()
+local Splash = Instance.new("Frame")
+Splash.Size               = UDim2.new(1, 0, 1, 0)
+Splash.Position           = UDim2.new(0, 0, 0, 0)
+Splash.BackgroundColor3   = Color3.fromRGB(6, 8, 14)
+Splash.BorderSizePixel    = 0
+Splash.ZIndex             = 100
+Splash.Parent             = SG
+
+-- Gradient overlay
+local grad = Instance.new("UIGradient")
+grad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,  30, 50)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(6,  8,  14)),
+	ColorSequenceKeypoint.new(1,   Color3.fromRGB(0,  10, 25)),
+})
+grad.Rotation = 135
+grad.Parent = Splash
+
+-- Glow circle behind text
+local glow = Instance.new("Frame")
+glow.Size                    = UDim2.new(0, 400, 0, 400)
+glow.Position                = UDim2.new(0.5, -200, 0.5, -220)
+glow.BackgroundColor3        = ACCENT
+glow.BackgroundTransparency  = 0.92
+glow.BorderSizePixel         = 0
+glow.ZIndex                  = 101
+glow.Parent                  = Splash
+Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
+
+-- Title
+local splashTitle = Instance.new("TextLabel")
+splashTitle.Size                 = UDim2.new(1, 0, 0, 90)
+splashTitle.Position             = UDim2.new(0, 0, 0.5, -110)
+splashTitle.BackgroundTransparency = 1
+splashTitle.Text                 = "PHONG HUB"
+splashTitle.TextColor3           = ACCENT
+splashTitle.Font                 = Enum.Font.SourceSansBold
+splashTitle.TextSize             = 62
+splashTitle.TextTransparency     = 1
+splashTitle.ZIndex               = 102
+splashTitle.Parent               = Splash
+
+-- Subtitle
+local splashSub = Instance.new("TextLabel")
+splashSub.Size                   = UDim2.new(1, 0, 0, 24)
+splashSub.Position               = UDim2.new(0, 0, 0.5, -18)
+splashSub.BackgroundTransparency = 1
+splashSub.Text                   = "Loading..."
+splashSub.TextColor3             = Color3.fromRGB(130, 140, 160)
+splashSub.Font                   = Enum.Font.SourceSans
+splashSub.TextSize               = 16
+splashSub.TextTransparency       = 1
+splashSub.ZIndex                 = 102
+splashSub.Parent                 = Splash
+
+-- Loading bar background
+local barBg = Instance.new("Frame")
+barBg.Size                   = UDim2.new(0, 320, 0, 4)
+barBg.Position               = UDim2.new(0.5, -160, 0.5, 30)
+barBg.BackgroundColor3       = Color3.fromRGB(30, 35, 50)
+barBg.BorderSizePixel        = 0
+barBg.BackgroundTransparency = 1
+barBg.ZIndex                 = 102
+barBg.Parent                 = Splash
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+-- Loading bar fill
+local barFill = Instance.new("Frame")
+barFill.Size                   = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3       = ACCENT
+barFill.BorderSizePixel        = 0
+barFill.ZIndex                 = 103
+barFill.Parent                 = barBg
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
+
+-- Version label
+local versionLbl = Instance.new("TextLabel")
+versionLbl.Size                   = UDim2.new(1, 0, 0, 20)
+versionLbl.Position               = UDim2.new(0, 0, 0.5, 50)
+versionLbl.BackgroundTransparency = 1
+versionLbl.Text                   = "v1.0  ·  Press RightAlt to toggle"
+versionLbl.TextColor3             = Color3.fromRGB(60, 70, 90)
+versionLbl.Font                   = Enum.Font.SourceSans
+versionLbl.TextSize               = 13
+versionLbl.TextTransparency       = 1
+versionLbl.ZIndex                 = 102
+versionLbl.Parent                 = Splash
+
+-- Animate splash
+task.spawn(function()
+	-- Fade in title + subtitle
+	TS:Create(splashTitle, TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {TextTransparency=0}):Play()
+	task.wait(0.3)
+	TS:Create(splashSub, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {TextTransparency=0}):Play()
+	TS:Create(barBg,     TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {BackgroundTransparency=0}):Play()
+	TS:Create(versionLbl,TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {TextTransparency=0}):Play()
+	task.wait(0.5)
+
+	-- Loading bar fills with fake steps
+	local steps = {
+		{0.25, "Loading ESP system..."},
+		{0.50, "Loading Aim Assist..."},
+		{0.72, "Loading Movement..."},
+		{0.88, "Loading Player Tools..."},
+		{1.00, "Ready!"},
+	}
+	for _, step in ipairs(steps) do
+		splashSub.Text = step[2]
+		TS:Create(barFill, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+			Size = UDim2.new(step[1], 0, 1, 0)
+		}):Play()
+		task.wait(0.45)
+	end
+
+	task.wait(0.3)
+
+	-- Glow pulse on complete
+	TS:Create(glow, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 1, true), {
+		BackgroundTransparency = 0.80
+	}):Play()
+	task.wait(0.6)
+
+	-- Fade out splash
+	TS:Create(Splash, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+		BackgroundTransparency = 1
+	}):Play()
+	TS:Create(splashTitle,  TweenInfo.new(0.4), {TextTransparency = 1}):Play()
+	TS:Create(splashSub,    TweenInfo.new(0.4), {TextTransparency = 1}):Play()
+	TS:Create(barBg,        TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+	TS:Create(versionLbl,   TweenInfo.new(0.4), {TextTransparency = 1}):Play()
+	TS:Create(glow,         TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+	task.wait(0.5)
+
+	Splash:Destroy()
+
+	-- GUI stays closed — press RightAlt to open
 end)
 
 -- Dummy Window reference (no Rayfield needed anymore)
 local Window = { Rayfield = false }
-
-	Name            = "🌀 Phong Hub",
-	LoadingTitle    = "Phong Hub",
-	LoadingSubtitle  = "by Phong",
-	Theme           = "Amethyst",  -- cleaner purple theme
-	ConfigurationSaving = { Enabled = false },
-	KeySystem       = false,
-})
-
--- ─────────────────────────────────────────
--- TAB 1 — ESP
--- ─────────────────────────────────────────
-local ESPTab = Window:CreateTab("👁 ESP", 4483362458)
-
-ESPTab:CreateSection("Highlights")
-ESPTab:CreateToggle({
-	Name = "Enable Highlights", CurrentValue = Settings.HighlightEnabled, Flag = "HLEnabled",
-	Callback = function(v) Settings.HighlightEnabled = v; refreshAllHighlights() end,
-})
-ESPTab:CreateSlider({
-	Name = "Fill Transparency", Range = {0,1}, Increment = 0.05,
-	CurrentValue = Settings.FillTransparency, Flag = "FillTrans",
-	Callback = function(v) Settings.FillTransparency = v; for _,h in pairs(highlights) do h.FillTransparency = v end end,
-})
-ESPTab:CreateSlider({
-	Name = "Outline Transparency", Range = {0,1}, Increment = 0.05,
-	CurrentValue = Settings.OutlineTransparency, Flag = "OutlineTrans",
-	Callback = function(v) Settings.OutlineTransparency = v; for _,h in pairs(highlights) do h.OutlineTransparency = v end end,
-})
-
-ESPTab:CreateSection("Box & Tracers")
-ESPTab:CreateToggle({
-	Name = "Enable 2D Box", CurrentValue = Settings.BoxEnabled, Flag = "BoxEnabled",
-	Callback = function(v) Settings.BoxEnabled = v end,
-})
-ESPTab:CreateToggle({
-	Name = "Enable Tracers", CurrentValue = Settings.TracerEnabled, Flag = "TracerEnabled",
-	Callback = function(v) Settings.TracerEnabled = v end,
-})
-ESPTab:CreateDropdown({
-	Name = "Tracer Origin", Options = {"Bottom","Center","Top"},
-	CurrentOption = {Settings.TracerOrigin}, MultipleOptions = false, Flag = "TracerOrigin",
-	Callback = function(v) if type(v)=="table" then v=v[1] end; Settings.TracerOrigin = v end,
-})
-ESPTab:CreateSlider({
-	Name = "Thickness", Range = {1,5}, Increment = 1,
-	CurrentValue = Settings.BoxThickness, Flag = "BoxThick",
-	Callback = function(v) Settings.BoxThickness = v end,
-})
-
-ESPTab:CreateSection("Labels")
-ESPTab:CreateToggle({
-	Name = "Health Bar", CurrentValue = Settings.HealthBarEnabled, Flag = "HealthBar",
-	Callback = function(v) Settings.HealthBarEnabled = v end,
-})
-ESPTab:CreateToggle({
-	Name = "Name Tag", CurrentValue = Settings.NameTagEnabled, Flag = "NameTag",
-	Callback = function(v) Settings.NameTagEnabled = v end,
-})
-ESPTab:CreateToggle({
-	Name = "Distance Label", CurrentValue = Settings.DistanceLabelEnabled, Flag = "DistLabel",
-	Callback = function(v) Settings.DistanceLabelEnabled = v end,
-})
-ESPTab:CreateSlider({
-	Name = "Max Render Distance (0 = unlimited)", Range = {0,2000}, Increment = 50,
-	CurrentValue = Settings.MaxRenderDistance, Flag = "MaxDist",
-	Callback = function(v) Settings.MaxRenderDistance = v end,
-})
-
--- ─────────────────────────────────────────
--- TAB 2 — Colors
--- ─────────────────────────────────────────
-local ColorTab = Window:CreateTab("🎨 Colors", 4483362458)
-
-ColorTab:CreateSection("Separate Colors")
-ColorTab:CreateToggle({
-	Name = "Enemy vs Team Colors", CurrentValue = Settings.SeparateColors, Flag = "SepColors",
-	Callback = function(v) Settings.SeparateColors = v; refreshAllHighlights() end,
-})
-
-ColorTab:CreateSection("Enemy")
-ColorTab:CreateColorPicker({ Name="Fill",    Color=Settings.EnemyFillColor,    Flag="EFill",    Callback=function(c) Settings.EnemyFillColor=c;    refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Outline", Color=Settings.EnemyOutlineColor, Flag="EOut",     Callback=function(c) Settings.EnemyOutlineColor=c; refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Box",     Color=Settings.EnemyBoxColor,     Flag="EBox",     Callback=function(c) Settings.EnemyBoxColor=c    end })
-ColorTab:CreateColorPicker({ Name="Tracer",  Color=Settings.EnemyTracerColor,  Flag="ETracer",  Callback=function(c) Settings.EnemyTracerColor=c  end })
-ColorTab:CreateColorPicker({ Name="Name",    Color=Settings.EnemyNameColor,    Flag="EName",    Callback=function(c) Settings.EnemyNameColor=c    end })
-
-ColorTab:CreateSection("Team")
-ColorTab:CreateColorPicker({ Name="Fill",    Color=Settings.TeamFillColor,    Flag="TFill",    Callback=function(c) Settings.TeamFillColor=c;    refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Outline", Color=Settings.TeamOutlineColor, Flag="TOut",     Callback=function(c) Settings.TeamOutlineColor=c; refreshAllHighlights() end })
-ColorTab:CreateColorPicker({ Name="Box",     Color=Settings.TeamBoxColor,     Flag="TBox",     Callback=function(c) Settings.TeamBoxColor=c     end })
-ColorTab:CreateColorPicker({ Name="Tracer",  Color=Settings.TeamTracerColor,  Flag="TTracer",  Callback=function(c) Settings.TeamTracerColor=c  end })
-ColorTab:CreateColorPicker({ Name="Name",    Color=Settings.TeamNameColor,    Flag="TName",    Callback=function(c) Settings.TeamNameColor=c    end })
-
--- ─────────────────────────────────────────
--- TAB 3 — Aim Assist
--- ─────────────────────────────────────────
-local AimTab = Window:CreateTab("🎯 Aim Assist", 4483362458)
-
-AimTab:CreateSection("Toggle")
-AimTab:CreateToggle({
-	Name = "Enable Aim Assist", CurrentValue = Settings.AimAssistEnabled, Flag = "AimEnabled",
-	Callback = function(v)
-		Settings.AimAssistEnabled = v
-		if not v and aimFOVCircle then aimFOVCircle.Visible = false end
-	end,
-})
-
-AimTab:CreateSection("Tuning")
-AimTab:CreateSlider({
-	Name = "Strength (0 = off, 1 = snap)", Range = {0,1}, Increment = 0.05,
-	CurrentValue = Settings.AimStrength, Flag = "AimStr",
-	Callback = function(v) Settings.AimStrength = v end,
-})
-AimTab:CreateSlider({
-	Name = "Smoothing (higher = smoother)", Range = {1,20}, Increment = 1,
-	CurrentValue = Settings.AimSmoothing, Flag = "AimSmooth",
-	Callback = function(v) Settings.AimSmoothing = v end,
-})
-AimTab:CreateSlider({
-	Name = "FOV Radius (px)", Range = {20,400}, Increment = 10,
-	CurrentValue = Settings.AimFOV, Flag = "AimFOV",
-	Callback = function(v) Settings.AimFOV = v end,
-})
-AimTab:CreateDropdown({
-	Name = "Target Bone", Options = {"Head","UpperTorso","HumanoidRootPart"},
-	CurrentOption = {Settings.AimBone}, MultipleOptions = false, Flag = "AimBone",
-	Callback = function(v) if type(v)=="table" then v=v[1] end; Settings.AimBone = v end,
-})
-
-AimTab:CreateSection("FOV Circle")
-AimTab:CreateToggle({
-	Name = "Show FOV Circle", CurrentValue = Settings.AimFOVCircle, Flag = "AimFOVCircle",
-	Callback = function(v) Settings.AimFOVCircle = v end,
-})
-AimTab:CreateColorPicker({
-	Name = "FOV Color", Color = Settings.AimFOVColor, Flag = "AimFOVCol",
-	Callback = function(c) Settings.AimFOVColor = c; if aimFOVCircle then aimFOVCircle.Color = c end end,
-})
-AimTab:CreateSlider({
-	Name = "FOV Thickness", Range = {1,4}, Increment = 1,
-	CurrentValue = Settings.AimFOVThickness, Flag = "AimFOVThick",
-	Callback = function(v) Settings.AimFOVThickness = v; if aimFOVCircle then aimFOVCircle.Thickness = v end end,
-})
-
-AimTab:CreateSection("Filters")
-AimTab:CreateToggle({
-	Name = "Skip Teammates", CurrentValue = false, Flag = "AimTeam",
-	Callback = function(v) Settings.AimTeamCheck = v end,
-})
-AimTab:CreateToggle({
-	Name = "Skip Players Behind Walls", CurrentValue = Settings.AimWallCheck, Flag = "AimWall",
-	Callback = function(v) Settings.AimWallCheck = v end,
-})
-
-AimTab:CreateSection("Keybind")
-
-local bindBtn = AimTab:CreateButton({
-	Name = "📌 Bind: [ " .. aimBindLabel .. " ]",
-	Callback = function() end,
-})
-
-local function updateBind()
-	bindBtn.Name = "📌 Bind: [ " .. aimBindLabel .. " ]"
-	Rayfield:Notify({ Title="✅ Bind Set", Content="Aim assist: "..aimBindLabel, Duration=3, Image=4483362458 })
-end
-
-local function quickBind(key, label)
-	aimBindKey = key; aimBindLabel = label; updateBind()
-end
-
-AimTab:CreateButton({
-	Name = "🎮 Set Keybind (click then press key)",
-	Callback = function()
-		if isListeningForBind then return end
-		isListeningForBind = true
-		Rayfield:Notify({ Title="⏳ Press a key...", Content="Keyboard keys only. Use Quick Binds for mouse.", Duration=5, Image=4483362458 })
-		task.wait(0.25)
-		local conn
-		conn = UserInputService.InputBegan:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-			if input.KeyCode == Enum.KeyCode.Unknown then return end
-			aimBindLabel = tostring(input.KeyCode):gsub("Enum%.KeyCode%.","")
-			aimBindKey   = input.KeyCode
-			isListeningForBind = false
-			conn:Disconnect()
-			updateBind()
-		end)
-		task.delay(8, function()
-			if isListeningForBind then
-				isListeningForBind = false; conn:Disconnect()
-				Rayfield:Notify({ Title="Cancelled", Content="Kept: "..aimBindLabel, Duration=3, Image=4483362458 })
-			end
-		end)
-	end,
-})
-
-AimTab:CreateSection("Quick Binds")
-AimTab:CreateButton({ Name="🖱️ RMB",        Callback=function() quickBind(Enum.UserInputType.MouseButton2,"RMB")       end })
-AimTab:CreateButton({ Name="🖱️ LMB",        Callback=function() quickBind(Enum.UserInputType.MouseButton1,"LMB")       end })
-AimTab:CreateButton({ Name="⌨️ Left Alt",   Callback=function() quickBind(Enum.KeyCode.LeftAlt,   "LeftAlt")   end })
-AimTab:CreateButton({ Name="⌨️ Left Shift", Callback=function() quickBind(Enum.KeyCode.LeftShift, "LeftShift") end })
-AimTab:CreateButton({ Name="⌨️ Q",          Callback=function() quickBind(Enum.KeyCode.Q,         "Q")         end })
-AimTab:CreateButton({ Name="⌨️ E",          Callback=function() quickBind(Enum.KeyCode.E,         "E")         end })
-AimTab:CreateButton({ Name="⌨️ CapsLock",   Callback=function() quickBind(Enum.KeyCode.CapsLock,  "CapsLock")  end })
-
--- ─────────────────────────────────────────
--- TAB 4 — Wall Check
--- ─────────────────────────────────────────
-local WallTab = Window:CreateTab("🧱 Wall Check", 4483362458)
-
-WallTab:CreateSection("ESP Wall Check")
-WallTab:CreateToggle({
-	Name = "Enable Wall Check", CurrentValue = Settings.WallCheckEnabled, Flag = "WallCheck",
-	Callback = function(v)
-		Settings.WallCheckEnabled = v
-		if not v then for _,h in pairs(highlights) do h.Enabled = true end end
-	end,
-})
-WallTab:CreateToggle({
-	Name = "Hide Box & Tracer Behind Walls", CurrentValue = Settings.WallCheckHideBox, Flag = "WallHideBox",
-	Callback = function(v) Settings.WallCheckHideBox = v end,
-})
-WallTab:CreateToggle({
-	Name = "Hide Highlight Behind Walls", CurrentValue = Settings.WallCheckHideHL, Flag = "WallHideHL",
-	Callback = function(v) Settings.WallCheckHideHL = v end,
-})
-WallTab:CreateColorPicker({
-	Name = "Behind-Wall Dim Color", Color = Settings.WallHiddenBoxColor, Flag = "WallDimCol",
-	Callback = function(c) Settings.WallHiddenBoxColor = c end,
-})
-
--- ─────────────────────────────────────────
--- TAB 5 — Team Check
--- ─────────────────────────────────────────
-local TeamTab = Window:CreateTab("🛡 Team", 4483362458)
-
-TeamTab:CreateSection("Team Check")
-TeamTab:CreateToggle({
-	Name = "Skip Teammates (ESP)", CurrentValue = Settings.TeamCheckEnabled, Flag = "TeamCheck",
-	Callback = function(v) Settings.TeamCheckEnabled = v; refreshAllHighlights() end,
-})
