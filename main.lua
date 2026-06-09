@@ -1,11 +1,4 @@
--- PhongHub.lua
--- LocalScript → StarterPlayerScripts
--- Requires Rayfield: https://sirius.menu/rayfield
--- Uses Drawing API (executor environment)
 
--- ============================================================
--- SERVICES
--- ============================================================
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -13,14 +6,6 @@ local TweenService     = game:GetService("TweenService")
 local Camera           = workspace.CurrentCamera
 local LocalPlayer      = Players.LocalPlayer
 
--- ============================================================
--- LOAD RAYFIELD
--- ============================================================
--- (No external library needed — fully custom GUI)
-
--- ============================================================
--- SETTINGS
--- ============================================================
 local Settings = {
 	-- Highlights
 	HighlightEnabled     = false,
@@ -42,8 +27,8 @@ local Settings = {
 	DistanceLabelEnabled = false,
 
 	-- Logic
-	TeamCheckEnabled     = true,
-	SeparateColors       = true,
+	TeamCheckEnabled     = false,
+	SeparateColors       = false,
 	MaxRenderDistance    = 1000,
 
 	-- Enemy Colors
@@ -67,16 +52,16 @@ local Settings = {
 	AimSmoothing         = 6,
 	AimBone              = "Head",
 	AimTeamCheck         = false,
-	AimWallCheck         = true,
-	AimFOVCircle         = true,
+	AimWallCheck         = false,
+	AimFOVCircle         = false,
 	AimFOVColor          = Color3.fromRGB(255, 255, 255),
 	AimFOVThickness      = 1,
 
 	-- Triggerbot
 	TriggerEnabled       = false,
 	TriggerDelay         = 0.05,
-	TriggerTeamCheck     = true,
-	TriggerWallCheck     = true,
+	TriggerTeamCheck     = false,
+	TriggerWallCheck     = false,
 	TriggerBone          = "Head",
 
 	-- Wall Check (ESP)
@@ -92,6 +77,7 @@ local Settings = {
 local highlights         = {}
 local perPlayerOverride  = {}
 local whitelist          = {}
+local triggerCooldown    = false
 
 local aimBindKey         = Enum.UserInputType.MouseButton2
 local aimBindLabel       = "RMB"
@@ -493,43 +479,67 @@ RunService.RenderStepped:Connect(function()
 	if Settings.TriggerEnabled then
 		local lc = LocalPlayer.Character
 		if lc then
-			local cam     = Camera.CFrame
-			local vp      = Camera.ViewportSize
-			local center  = Vector2.new(vp.X/2, vp.Y/2)
-			local ray     = Camera:ScreenPointToRay(center.X, center.Y)
-			local rp      = RaycastParams.new()
+			local cam    = Camera.CFrame
+			local vp     = Camera.ViewportSize
+			local ray    = Camera:ScreenPointToRay(vp.X/2, vp.Y/2)
+			local rp     = RaycastParams.new()
 			rp.FilterType = Enum.RaycastFilterType.Exclude
 			rp.FilterDescendantsInstances = { lc }
-			local result  = workspace:Raycast(ray.Origin, ray.Direction * 1000, rp)
+			local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, rp)
+
 			if result and result.Instance then
 				local hit = result.Instance
-				-- Check if hit belongs to a player character
 				for _, player in ipairs(Players:GetPlayers()) do
 					if player == LocalPlayer then continue end
 					if Settings.TriggerTeamCheck and isTeammate(player) then continue end
 					local tChar = player.Character
 					if not tChar then continue end
-					if hit:IsDescendantOf(tChar) then
-						-- Wall check
-						if Settings.TriggerWallCheck then
-							local tHRP = tChar:FindFirstChild("HumanoidRootPart")
-							if tHRP then
-								local excl = {tChar, lc}
-								local wp   = RaycastParams.new()
-								wp.FilterType = Enum.RaycastFilterType.Exclude
-								wp.FilterDescendantsInstances = excl
-								local wr = workspace:Raycast(cam.Position, tHRP.Position - cam.Position, wp)
-								if wr then break end
-							end
+					if not hit:IsDescendantOf(tChar) then continue end
+
+					-- Wall check
+					if Settings.TriggerWallCheck then
+						local tHRP = tChar:FindFirstChild("HumanoidRootPart")
+						if tHRP then
+							local excl = { tChar, lc }
+							local wp   = RaycastParams.new()
+							wp.FilterType = Enum.RaycastFilterType.Exclude
+							wp.FilterDescendantsInstances = excl
+							local wr = workspace:Raycast(cam.Position, tHRP.Position - cam.Position, wp)
+							if wr then break end
 						end
-						-- Fire — simulate mouse click
-						task.delay(Settings.TriggerDelay, function()
-							if Settings.TriggerEnabled then
-								mouse1click()
-							end
-						end)
-						break
 					end
+
+					-- Fire with delay + cooldown so it doesn't spam
+					if not triggerCooldown then
+						triggerCooldown = true
+						task.delay(Settings.TriggerDelay, function()
+							if not Settings.TriggerEnabled then
+								triggerCooldown = false
+								return
+							end
+							-- Try all executor click methods
+							if mouse1click then
+								pcall(mouse1click)
+							elseif Input and Input.MouseClick then
+								pcall(Input.MouseClick)
+							elseif syn and syn.mouse_click then
+								pcall(syn.mouse_click)
+							else
+								-- Universal fallback: fire InputBegan/Ended events
+								local uis = game:GetService("UserInputService")
+								local vib = Instance.new("InputObject")
+								vib.UserInputType = Enum.UserInputType.MouseButton1
+								vib.UserInputState = Enum.UserInputState.Begin
+								uis:FireInputEvent(vib)
+								task.wait(0.05)
+								vib.UserInputState = Enum.UserInputState.End
+								uis:FireInputEvent(vib)
+							end
+							task.wait(0.15) -- min time between shots
+							triggerCooldown = false
+						end)
+					end
+					break
 				end
 			end
 		end
@@ -745,6 +755,10 @@ local function saveConfig()
 			espDist      = Settings.DistanceLabelEnabled,
 			wallCheck    = Settings.WallCheckEnabled,
 			teamCheck    = Settings.TeamCheckEnabled,
+			sepColors    = Settings.SeparateColors,
+			trigEnabled  = Settings.TriggerEnabled,
+			trigTeam     = Settings.TriggerTeamCheck,
+			trigWall     = Settings.TriggerWallCheck,
 		})
 	end)
 	if ok then pcall(writefile, CONFIG_FILE, json) end
@@ -775,7 +789,11 @@ local function loadConfig()
 	Settings.NameTagEnabled       = cfg.espName      == true
 	Settings.DistanceLabelEnabled = cfg.espDist      == true
 	Settings.WallCheckEnabled     = cfg.wallCheck    == true
-	Settings.TeamCheckEnabled     = cfg.teamCheck    ~= false  -- default true is fine
+	Settings.TeamCheckEnabled     = cfg.teamCheck    == true
+	Settings.SeparateColors       = cfg.sepColors    == true
+	Settings.TriggerEnabled       = cfg.trigEnabled  == true
+	Settings.TriggerTeamCheck     = cfg.trigTeam     == true
+	Settings.TriggerWallCheck     = cfg.trigWall     == true
 	-- restore bind key from label
 	local keyMap = {
 		RMB="MouseButton2", LMB="MouseButton1",
@@ -2212,5 +2230,4 @@ task.spawn(function()
 	-- GUI stays closed — press RightAlt to open
 end)
 
--- Dummy Window reference (no Rayfield needed anymore)
 local Window = { Rayfield = false }
